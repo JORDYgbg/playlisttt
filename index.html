@@ -11,7 +11,7 @@
 :root{
   --ink:#0a0a0c; --ink2:#111115; --ink3:#18181f; --ink4:#22222a; --ink5:#2e2e38;
   --silk:rgba(255,255,255,.04); --silk2:rgba(255,255,255,.07); --silk3:rgba(255,255,255,.12); --silk4:rgba(255,255,255,.18);
-  --paper:#f0ece4; --paper2:rgba(240,236,228,.7); --paper3:rgba(240,236,228,.35); --paper4:rgba(240,236,228,.15);
+  --paper:#f0ece4; --paper3:rgba(240,236,228,.35); --paper4:rgba(240,236,228,.15);
   --gold:#c9a96e; --gold2:#e8cfa0; --gold3:rgba(201,169,110,.15); --red:#e83a5a;
   --display:'Cormorant Garamond',Georgia,serif; --ui:'Syne',sans-serif;
   --sidebar:280px; --player:88px; --header:56px; --rad:12px; --rad-sm:8px;
@@ -64,8 +64,10 @@ main{grid-area:mn; overflow-y:auto; scroll-behavior:smooth; background:var(--ink
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 
 .hero{padding:60px 48px 52px; border-bottom:1px solid var(--silk2); position:relative; overflow:hidden;}
+.hero-eyebrow{font-size:10px; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:var(--gold); margin-bottom:14px; opacity:.8;}
 .hero-title{font-family:var(--display); font-size:clamp(38px,5vw,62px); font-weight:300; line-height:1.05; color:var(--paper); letter-spacing:-.01em;}
 .hero-title em{font-style:italic; color:var(--gold2);}
+.hero-sub{font-size:14px; color:var(--paper3); margin-top:12px; font-weight:400; max-width:360px; line-height:1.6;}
 .genre-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
 .genre-card{background:var(--ink3); border:1px solid var(--silk2); border-radius:var(--rad); padding:20px 18px; cursor:pointer; transition:all .2s;}
 .genre-card:hover{border-color:var(--gold); transform:translateY(-3px); box-shadow:0 8px 32px rgba(0,0,0,.4);}
@@ -221,17 +223,17 @@ main{grid-area:mn; overflow-y:auto; scroll-behavior:smooth; background:var(--ink
 </div>
 
 <script>
-// ==================== DATA COMPLETA CON PORTADAS Y AUDIO CORRECTO ====================
+// ==================== DATA CON AUDIO Y PORTADAS ====================
 const SONGS = [
-  {id:1,  t:"Favorite Lie", a:"Lil Tecca", g:"Hip-Hop", m:["energicas","nocturnas"], y:"-2HhOtA2e5M"},
-  {id:2,  t:"Overnight Celebrity", a:"Twista ft. Miri Ben-Ari", g:"Hip-Hop", m:["chill","feliz"], y:"z3JmMF6dGGk"},
-  {id:3,  t:"Pyramids", a:"Frank Ocean", g:"R&B", m:["chill","nocturnas","tristes"], y:"LjFrZMDEAA8"},
-  {id:4,  t:"Every Breath You Take", a:"The Police", g:"Rock", m:["chill","nocturnas"], y:"OMOGaugKpzs"},
-  {id:5,  t:"Dancing in the Moonlight", a:"Toploader", g:"Pop", m:["feliz","energicas"], y:"4rb8aOzo1qY"},
-  {id:6,  t:"New N3on", a:"Playboi Carti", g:"Hip-Hop", m:["energicas","nocturnas"], y:"mUip00JK_rU"},
-  {id:7,  t:"New Light", a:"John Mayer", g:"Pop", m:["chill","feliz"], y:"kvmBFLCGVYY"},
-  {id:8,  t:"I Ran (So Far Away)", a:"A Flock of Seagulls", g:"New Wave", m:["energicas","dance"], y:"v4wBrED0g4I"},
-  {id:9,  t:"Paranoid", a:"Kanye West ft. Mr Hudson", g:"Hip-Hop", m:["nocturnas","energicas"], y:"irBP5FnksKc"},
+  {id:1, t:"Favorite Lie", a:"Lil Tecca", g:"Hip-Hop", m:["energicas","nocturnas"], y:"-2HhOtA2e5M"},
+  {id:2, t:"Overnight Celebrity", a:"Twista ft. Miri Ben-Ari", g:"Hip-Hop", m:["chill","feliz"], y:"z3JmMF6dGGk"},
+  {id:3, t:"Pyramids", a:"Frank Ocean", g:"R&B", m:["chill","nocturnas","tristes"], y:"LjFrZMDEAA8"},
+  {id:4, t:"Every Breath You Take", a:"The Police", g:"Rock", m:["chill","nocturnas"], y:"OMOGaugKpzs"},
+  {id:5, t:"Dancing in the Moonlight", a:"Toploader", g:"Pop", m:["feliz","energicas"], y:"4rb8aOzo1qY"},
+  {id:6, t:"New N3on", a:"Playboi Carti", g:"Hip-Hop", m:["energicas","nocturnas"], y:"mUip00JK_rU"},
+  {id:7, t:"New Light", a:"John Mayer", g:"Pop", m:["chill","feliz"], y:"kvmBFLCGVYY"},
+  {id:8, t:"I Ran (So Far Away)", a:"A Flock of Seagulls", g:"New Wave", m:["energicas","dance"], y:"v4wBrED0g4I"},
+  {id:9, t:"Paranoid", a:"Kanye West ft. Mr Hudson", g:"Hip-Hop", m:["nocturnas","energicas"], y:"irBP5FnksKc"},
   {id:10, t:"Tieduprightnow", a:"Parcels", g:"Funk", m:["feliz","dance"], y:"q5rqeZnQ4-0"},
   {id:11, t:"Telekinesis", a:"Travis Scott ft. SZA", g:"Hip-Hop", m:["nocturnas","energicas"], y:"xl5LunV-OkU"},
   {id:12, t:"WAY BIGGER", a:"Don Toliver", g:"Hip-Hop", m:["chill","nocturnas"], y:"Ulzdqoy57wc"},
@@ -348,10 +350,10 @@ let playing = false, shuffle = false, repeat = false;
 let tickInterval = null, fakeInterval = null, fakeTime = 0;
 let liked = new Set();
 
-// Preload portadas en alta calidad
+// Portadas en alta calidad
 SONGS.forEach(s => { if (s.y) s.thumb = `https://img.youtube.com/vi/${s.y}/maxresdefault.jpg`; });
 
-// ==================== FUNCIONES BÁSICAS ====================
+// ==================== FUNCIONES ====================
 function updateClock() {
   const d = new Date();
   document.getElementById('clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
@@ -360,14 +362,13 @@ setInterval(updateClock, 15000);
 
 function setGreeting() {
   const h = new Date().getHours();
-  let g = "Buenas noches,<br/><em>Lesly.</em>", s = "La noche tiene el mejor mood.";
-  if (h >= 5 && h < 12) { g = "Buenos días,<br/><em>Lesly.</em>"; s = "Arranca el día con buena vibra."; }
-  else if (h >= 12 && h < 19) { g = "Buenas tardes,<br/><em>Lesly.</em>"; s = "¿Qué mood traes esta tarde?"; }
+  let g = "Buenas noches,<br/><em>Jordy.</em>", s = "La noche tiene el mejor mood.";
+  if (h >= 5 && h < 12) { g = "Buenos días,<br/><em>Jordy.</em>"; s = "Arranca el día con buena vibra."; }
+  else if (h >= 12 && h < 19) { g = "Buenas tardes,<br/><em>Jordy.</em>"; s = "¿Qué mood traes esta tarde?"; }
   document.getElementById('hero-greeting').innerHTML = g;
   document.getElementById('hero-sub').textContent = s;
 }
 
-// YouTube Player
 function loadYouTubeAPI() {
   const s = document.createElement('script');
   s.src = 'https://www.youtube.com/iframe_api';
@@ -379,11 +380,10 @@ window.onYouTubeIframeAPIReady = function() {
 };
 function onYTStateChange(e) {
   if (e.data === YT.PlayerState.ENDED) nextSong();
-  if (e.data === YT.PlayerState.PLAYING) { playing = true; updatePlayIcon(); startTick(); }
-  if (e.data === YT.PlayerState.PAUSED) { playing = false; updatePlayIcon(); stopTick(); }
+  if (e.data === YT.PlayerState.PLAYING) { playing = true; updatePlayIcon(); }
+  if (e.data === YT.PlayerState.PAUSED) playing = false;
 }
 
-// Render Song List con portadas
 function renderSongList(list, containerId) {
   const c = document.getElementById(containerId);
   c.innerHTML = '';
@@ -409,14 +409,13 @@ function renderSongList(list, containerId) {
   });
 }
 
-// Playback
-async function playSongFromList(song, list) {
+function playSongFromList(song, list) {
   queue = list;
   queueIdx = list.findIndex(s => s.id === song.id);
   startPlayingSong(song);
 }
 
-async function startPlayingSong(song) {
+function startPlayingSong(song) {
   curSong = song;
   document.getElementById('player').classList.remove('idle');
   document.getElementById('player-title').textContent = song.t;
@@ -432,19 +431,7 @@ async function startPlayingSong(song) {
   } else {
     playing = true;
     updatePlayIcon();
-    runFake(210);
   }
-}
-
-function runFake(dur) {
-  stopTick(); clearInterval(fakeInterval); fakeTime = 0;
-  document.getElementById('time-dur').textContent = fmt(dur);
-  fakeInterval = setInterval(() => {
-    if (!playing) return;
-    fakeTime++;
-    setProg((fakeTime/dur)*100, fakeTime, dur);
-    if (fakeTime >= dur) { clearInterval(fakeInterval); nextSong(); }
-  }, 1000);
 }
 
 function togglePlay() {
@@ -474,24 +461,12 @@ function updatePlayIcon() {
   btn.textContent = playing ? '❚❚' : '▶';
 }
 
-function setProg(pct, cur, dur) {
-  document.getElementById('prog-fill').style.width = pct + '%';
-  document.getElementById('prog-handle').style.left = pct + '%';
-  document.getElementById('time-cur').textContent = fmt(cur);
-  document.getElementById('time-dur').textContent = fmt(dur);
-}
-function fmt(s) {
-  if (!s || isNaN(s)) return '0:00';
-  const m = Math.floor(s/60), sc = Math.floor(s%60);
-  return `${m}:${sc.toString().padStart(2,'0')}`;
-}
-
 function setVolume(v) {
   if (ytPlayer && ytPlayer.setVolume) ytPlayer.setVolume(+v);
 }
 
-function toggleShuffle() { shuffle = !shuffle; document.getElementById('shuffle-btn').classList.toggle('on', shuffle); }
-function toggleRepeat() { repeat = !repeat; document.getElementById('repeat-btn').classList.toggle('on', repeat); }
+function toggleShuffle() { shuffle = !shuffle; }
+function toggleRepeat() { repeat = !repeat; }
 function toggleHeart() {
   if (!curSong) return;
   const btn = document.getElementById('heart-btn');
@@ -507,19 +482,16 @@ function shuffleAll() {
   setTimeout(() => startPlayingSong(queue[0]), 100);
 }
 
-// Navegación
 function nav(target) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-' + target).classList.add('active');
   if (target === 'all') renderSongList(SONGS, 'all-songs');
 }
+
 function handleSearch(val) {
   val = val.trim();
   if (!val) { nav('home'); return; }
-  const results = SONGS.filter(s => 
-    s.t.toLowerCase().includes(val.toLowerCase()) || 
-    s.a.toLowerCase().includes(val.toLowerCase())
-  );
+  const results = SONGS.filter(s => s.t.toLowerCase().includes(val.toLowerCase()) || s.a.toLowerCase().includes(val.toLowerCase()));
   document.getElementById('search-title').textContent = `"${val}"`;
   document.getElementById('search-sub').textContent = `${results.length} resultados`;
   renderSongList(results, 'search-songs');
@@ -536,17 +508,13 @@ function closeSidebar() {
   document.getElementById('overlay').classList.add('hidden');
 }
 
-function startTick() { /* puedes expandir si quieres progreso real */ }
-function stopTick() { clearInterval(tickInterval); clearInterval(fakeInterval); }
-
 // INIT
 window.onload = function() {
   setGreeting();
   updateClock();
   queue = [...SONGS];
-  renderSongList(SONGS, 'all-songs'); // precarga
   loadYouTubeAPI();
-  console.log("✅ Jordy Vibes cargado - Todas las canciones con audio correcto y portadas en alta calidad");
+  console.log("✅ Jordy Vibes listo - Interfaz original + portadas altas + audio correcto");
 };
 </script>
 </body>
