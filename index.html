@@ -161,6 +161,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
   display:flex;align-items:center;justify-content:center;
   font-family:'Playfair Display',serif;font-size:16px;font-style:italic;
   border:1px solid rgba(255,255,255,.1);background:var(--s2);
+  color:var(--gold);
   transition:background .3s,border-color .3s,color .3s;}
 .pmeta{min-width:0;}
 .ptl{font-size:13px;font-weight:500;color:var(--text);
@@ -254,7 +255,6 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
 .sr:nth-child(3){animation-delay:.06s;}.sr:nth-child(4){animation-delay:.08s;}
 .sr:nth-child(5){animation-delay:.1s;}.sr:nth-child(n+6){animation-delay:.12s;}
 
-/* SC widget hidden */
 #sc-wrap{position:fixed;bottom:300px;left:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0;}
 </style>
 </head>
@@ -279,7 +279,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
         <circle cx="6" cy="6" r="4.5" stroke="rgba(255,255,255,.3)" stroke-width="1.4"/>
         <line x1="9.5" y1="9.5" x2="13" y2="13" stroke="rgba(255,255,255,.3)" stroke-width="1.4" stroke-linecap="round"/>
       </svg>
-      <input type="text" id="sinp" placeholder="Buscar canciones, artistas..." oninput="doSearch(this.value)"/>
+      <input type="text" id="sinp" placeholder="Buscar canciones, artistas..." oninput="handleSearchInput(this.value)"/>
     </div>
   </div>
   <div class="hrgt">
@@ -363,7 +363,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
 
 <div id="pbar" class="idle">
   <div class="pinfo">
-    <div class="pthumb" id="pthumb" style="color:var(--gold)">—</div>
+    <div class="pthumb" id="pthumb">—</div>
     <div class="pmeta">
       <div class="ptl" id="ptl">—</div>
       <div class="pat" id="pat">Selecciona una canción</div>
@@ -419,450 +419,623 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
 
 <script src="https://w.soundcloud.com/player/api.js"></script>
 <script>
+/* ════ CONSTANTS ════ */
+const TOAST_DURATION_MS        = 2800
+const SC_INIT_DELAY_MS         = 800
+const PREV_REWIND_THRESHOLD_MS = 3000
+const SEARCH_DEBOUNCE_MS       = 150
+const FAKE_SONG_DURATION_S     = 215
+
 /* ════ STARS ════ */
-(function(){
-  const c=document.getElementById('stars'),ctx=c.getContext('2d');let stars=[]
+;(function(){
+  const c = document.getElementById('stars')
+  const ctx = c.getContext('2d')
+  let stars = [], animId = null
+
   function resize(){
-    c.width=window.innerWidth;c.height=window.innerHeight;stars=[]
-    const n=Math.floor((c.width*c.height)/6000)
-    for(let i=0;i<n;i++)stars.push({x:Math.random()*c.width,y:Math.random()*c.height,
-      r:Math.random()*1.1+.2,speed:Math.random()*.003+.001,phase:Math.random()*Math.PI*2})
+    c.width  = window.innerWidth
+    c.height = window.innerHeight
+    stars = []
+    const n = Math.floor((c.width * c.height) / 6000)
+    for(let i = 0; i < n; i++)
+      stars.push({
+        x: Math.random() * c.width,
+        y: Math.random() * c.height,
+        r: Math.random() * 1.1 + .2,
+        speed: Math.random() * .003 + .001,
+        phase: Math.random() * Math.PI * 2
+      })
   }
+
   function draw(t){
-    ctx.clearRect(0,0,c.width,c.height)
-    stars.forEach(s=>{
-      const alpha=.1+.55*Math.abs(Math.sin(t*s.speed+s.phase))
-      ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2)
-      ctx.fillStyle=`rgba(232,213,176,${alpha})`;ctx.fill()
+    ctx.clearRect(0, 0, c.width, c.height)
+    stars.forEach(s => {
+      const alpha = .1 + .55 * Math.abs(Math.sin(t * s.speed + s.phase))
+      ctx.beginPath()
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(232,213,176,${alpha})`
+      ctx.fill()
     })
-    requestAnimationFrame(draw)
+    animId = requestAnimationFrame(draw)
   }
-  resize();window.addEventListener('resize',resize);requestAnimationFrame(draw)
+
+  /* FIX: Pausar animación cuando la pestaña no es visible → ahorra batería */
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden'){
+      cancelAnimationFrame(animId)
+    } else {
+      animId = requestAnimationFrame(draw)
+    }
+  })
+
+  resize()
+  window.addEventListener('resize', resize)
+  animId = requestAnimationFrame(draw)
 })()
 
-/* ════ DATA — sc = SoundCloud URL (paste full URL) ════ */
-const GC={
-  "Hip-Hop":{c:"#c9a96e"},"R&B":{c:"#c47c7c"},"Rock":{c:"#6b8fc4"},
-  "Pop":{c:"#8b8bc4"},"Latin":{c:"#7ab87a"},"Electronic":{c:"#5a9ea0"},
-  "Funk":{c:"#c4a84e"},"Disco":{c:"#b870a8"},"New Wave":{c:"#60a8b0"},"Classic":{c:"#a08060"},
+/* ════ DATA ════
+   sc = URL completa de SoundCloud. Deja sc:"" si aún no la tienes.
+   Ejemplo: sc:"https://soundcloud.com/artista/cancion"
+══════════════════════════════════════════════════════════════════ */
+const GC = {
+  "Hip-Hop":   {c:"#c9a96e"}, "R&B":      {c:"#c47c7c"}, "Rock":      {c:"#6b8fc4"},
+  "Pop":       {c:"#8b8bc4"}, "Latin":    {c:"#7ab87a"}, "Electronic":{c:"#5a9ea0"},
+  "Funk":      {c:"#c4a84e"}, "Disco":    {c:"#b870a8"}, "New Wave":  {c:"#60a8b0"},
+  "Classic":   {c:"#a08060"},
 }
-const MOODS={
-  feliz:     {l:"Feliz",     c:"#e8c040"},
-  chill:     {l:"Chill",     c:"#5aabb8"},
-  nocturnas: {l:"Nocturnas", c:"#7b6bb0"},
-  tristes:   {l:"Tristes",   c:"#8080a0"},
-  energicas: {l:"Enérgicas", c:"#d05030"},
-  romanticas:{l:"Románticas",c:"#c07878"},
-  dance:     {l:"Dance",     c:"#48b870"},
+const MOODS = {
+  feliz:      {l:"Feliz",      c:"#e8c040"},
+  chill:      {l:"Chill",      c:"#5aabb8"},
+  nocturnas:  {l:"Nocturnas",  c:"#7b6bb0"},
+  tristes:    {l:"Tristes",    c:"#8080a0"},
+  energicas:  {l:"Enérgicas",  c:"#d05030"},
+  romanticas: {l:"Románticas", c:"#c07878"},
+  dance:      {l:"Dance",      c:"#48b870"},
 }
 
-// sc = SoundCloud URL completo de la canción
-// Deja sc:"" si todavía no encontraste la canción en SoundCloud
-const S=[
-  {id:1,  t:"Favorite Lie",               a:"Lil Tecca",                          g:"Hip-Hop",   m:["energicas","nocturnas"],        sc:"https://soundcloud.com/liltecca/favoritelie"},
-  {id:2,  t:"Overnight Celebrity",         a:"Twista ft. Miri Ben-Ari",            g:"Hip-Hop",   m:["chill","feliz"],                sc:"https://soundcloud.com/twistaofficial/twista-overnight-celebrity"},
-  {id:3,  t:"Pyramids",                    a:"Frank Ocean",                        g:"R&B",       m:["chill","nocturnas","tristes"],  sc:"https://soundcloud.com/frankocean/pyramids"},
-  {id:4,  t:"Every Breath You Take",       a:"The Police",                         g:"Rock",      m:["chill","nocturnas"],            sc:""},
-  {id:5,  t:"Dancing in the Moonlight",    a:"Toploader",                          g:"Pop",       m:["feliz","energicas"],            sc:""},
-  {id:6,  t:"New N3on",                    a:"Playboi Carti",                      g:"Hip-Hop",   m:["energicas","nocturnas"],        sc:"https://soundcloud.com/playboicarti/new-n3on"},
-  {id:7,  t:"New Light",                   a:"John Mayer",                         g:"Pop",       m:["chill","feliz"],                sc:""},
-  {id:8,  t:"I Ran (So Far Away)",         a:"A Flock of Seagulls",                g:"New Wave",  m:["energicas","dance"],            sc:""},
-  {id:9,  t:"Paranoid",                    a:"Kanye West ft. Mr Hudson",           g:"Hip-Hop",   m:["nocturnas","energicas"],        sc:""},
-  {id:10, t:"Tieduprightnow",              a:"Parcels",                            g:"Funk",      m:["feliz","dance"],                sc:""},
-  {id:11, t:"Telekinesis",                 a:"Travis Scott ft. SZA",               g:"Hip-Hop",   m:["nocturnas","energicas"],        sc:""},
-  {id:12, t:"WAY BIGGER",                  a:"Don Toliver",                        g:"Hip-Hop",   m:["chill","nocturnas"],            sc:""},
-  {id:13, t:"Chau",                        a:"No Te Va Gustar",                    g:"Latin",     m:["feliz","energicas"],            sc:""},
-  {id:14, t:"El amar y el querer",         a:"José José",                          g:"Latin",     m:["tristes","romanticas"],         sc:""},
-  {id:15, t:"Cama y Mesa",                 a:"Roberto Carlos",                     g:"Latin",     m:["tristes","romanticas"],         sc:"https://soundcloud.com/robertocarlosofficial/cama-y-mesa-cama-e-mesa"},
-  {id:16, t:"Detalles",                    a:"Roberto Carlos",                     g:"Latin",     m:["romanticas","chill"],           sc:""},
-  {id:17, t:"All of the Lights",           a:"Kanye West",                         g:"Hip-Hop",   m:["energicas","nocturnas"],        sc:""},
-  {id:18, t:"Rayando el Sol",              a:"Maná",                               g:"Latin",     m:["feliz","energicas"],            sc:""},
-  {id:19, t:"Baby Be Mine",                a:"Michael Jackson",                    g:"Pop",       m:["feliz","dance"],                sc:""},
-  {id:20, t:"Up There",                    a:"Post Malone",                        g:"Hip-Hop",   m:["tristes","chill"],              sc:""},
-  {id:21, t:"Lo Dudo",                     a:"José José",                          g:"Latin",     m:["tristes","romanticas"],         sc:""},
-  {id:22, t:"Hang On to Your Love",        a:"Sade",                               g:"R&B",       m:["chill","romanticas"],           sc:""},
-  {id:23, t:"Risk It All",                 a:"Bruno Mars",                         g:"Pop",       m:["energicas","feliz"],            sc:""},
-  {id:24, t:"Kilómetros",                  a:"Los Caligaris",                      g:"Latin",     m:["feliz","energicas"],            sc:""},
-  {id:25, t:"Giros",                       a:"Fito Páez",                          g:"Latin",     m:["tristes","chill"],              sc:""},
-  {id:26, t:"Born to Be Alive",            a:"Patrick Hernandez",                  g:"Disco",     m:["feliz","dance"],                sc:""},
-  {id:27, t:"Buenos Aires",                a:"Nathy Peluso",                       g:"Latin",     m:["energicas","feliz"],            sc:""},
-  {id:28, t:"Trama y Desenlace",           a:"Gonzalo Genek ft. Monstar Ragz",     g:"Hip-Hop",   m:["nocturnas","tristes"],          sc:""},
-  {id:29, t:"A Veces",                     a:"Gonzalo Genek",                      g:"Hip-Hop",   m:["chill","nocturnas"],            sc:""},
-  {id:30, t:"Cariño",                      a:"The Marías",                         g:"R&B",       m:["chill","romanticas"],           sc:""},
-  {id:31, t:"Slide",                       a:"Calvin Harris",                      g:"Electronic",m:["dance","energicas"],            sc:""},
-  {id:32, t:"Have You Ever Seen the Rain", a:"Creedence Clearwater Revival",       g:"Rock",      m:["chill","feliz"],                sc:""},
-  {id:33, t:"Luna de Miel en la Mano",     a:"Virus",                              g:"Rock",      m:["energicas"],                    sc:""},
-  {id:34, t:"pensé en ti",                 a:"Jaze ft. Caloncho",                  g:"Latin",     m:["chill","romanticas"],           sc:""},
-  {id:35, t:"Estrechez de Corazón",        a:"Los Prisioneros",                    g:"Rock",      m:["tristes"],                      sc:""},
-  {id:36, t:"Tren al Sur",                 a:"Los Prisioneros",                    g:"Rock",      m:["chill"],                        sc:""},
-  {id:37, t:"Devil in a New Dress",        a:"Kanye West ft. Rick Ross",           g:"Hip-Hop",   m:["nocturnas","chill"],            sc:""},
-  {id:38, t:"Work Out",                    a:"J. Cole",                            g:"Hip-Hop",   m:["energicas"],                    sc:""},
-  {id:39, t:"MIDDLE CHILD",                a:"J. Cole",                            g:"Hip-Hop",   m:["nocturnas"],                    sc:""},
-  {id:40, t:"No Role Modelz",              a:"J. Cole",                            g:"Hip-Hop",   m:["chill"],                        sc:""},
-  {id:41, t:"In the Morning",              a:"J. Cole ft. Drake",                  g:"Hip-Hop",   m:["chill","nocturnas"],            sc:""},
-  {id:42, t:"Sideline Story",              a:"J. Cole",                            g:"Hip-Hop",   m:["tristes"],                      sc:""},
-  {id:43, t:"a m a r i",                  a:"J. Cole",                            g:"Hip-Hop",   m:["chill"],                        sc:""},
-  {id:44, t:"White Dress",                 a:"Kanye West",                         g:"Hip-Hop",   m:["nocturnas","romanticas"],       sc:""},
-  {id:45, t:"Still Dreaming",              a:"Nas ft. Kanye West",                 g:"Hip-Hop",   m:["tristes"],                      sc:""},
-  {id:46, t:"Selfish",                     a:"Kanye West ft. John Legend",         g:"Hip-Hop",   m:["tristes","romanticas"],         sc:""},
-  {id:47, t:"Hey Mama",                    a:"Kanye West",                         g:"Hip-Hop",   m:["tristes"],                      sc:""},
-  {id:48, t:"Family Business",             a:"Kanye West",                         g:"Hip-Hop",   m:["chill"],                        sc:""},
-  {id:49, t:"Roses",                       a:"Kanye West",                         g:"Hip-Hop",   m:["feliz"],                        sc:""},
-  {id:50, t:"Hell of a Life",              a:"Kanye West",                         g:"Hip-Hop",   m:["nocturnas"],                    sc:""},
-  {id:51, t:"The New Workout Plan",        a:"Kanye West",                         g:"Hip-Hop",   m:["energicas"],                    sc:""},
-  {id:52, t:"Forrest Gump",                a:"Frank Ocean",                        g:"R&B",       m:["chill","romanticas"],           sc:""},
-  {id:53, t:"Novacane",                    a:"Frank Ocean",                        g:"R&B",       m:["chill","nocturnas"],            sc:""},
-  {id:54, t:"No Church in the Wild",       a:"Jay-Z ft. Kanye West",               g:"Hip-Hop",   m:["nocturnas"],                    sc:""},
-  {id:55, t:"Hand Me Downs",               a:"Mac Miller",                         g:"Hip-Hop",   m:["chill"],                        sc:""},
-  {id:56, t:"Be My Lover",                 a:"La Bouche",                          g:"Electronic",m:["dance","feliz"],                sc:""},
-  {id:57, t:"Close to You",                a:"The Carpenters",                     g:"Classic",   m:["romanticas","chill"],           sc:""},
-  {id:58, t:"I Will Survive",              a:"Gloria Gaynor",                      g:"Disco",     m:["feliz","energicas"],            sc:""},
-  {id:59, t:"September",                   a:"Earth, Wind & Fire",                 g:"Funk",      m:["feliz"],                        sc:""},
-  {id:60, t:"Another Day in Paradise",     a:"Phil Collins",                       g:"Pop",       m:["chill"],                        sc:""},
-  {id:61, t:"Roxanne",                     a:"The Police",                         g:"Rock",      m:["tristes"],                      sc:""},
-  {id:62, t:"Don't Let Me Down",           a:"The Beatles",                        g:"Rock",      m:["chill"],                        sc:""},
-  {id:63, t:"Pump Up the Jam",             a:"Technotronic",                       g:"Electronic",m:["energicas","dance"],            sc:""},
-  {id:64, t:"True",                        a:"Spandau Ballet",                     g:"New Wave",  m:["romanticas","chill"],           sc:""},
-  {id:65, t:"That's Life",                 a:"Frank Sinatra",                      g:"Classic",   m:["feliz"],                        sc:""},
-  {id:66, t:"Your Love",                   a:"The Outfield",                       g:"Rock",      m:["energicas"],                    sc:""},
-  {id:67, t:"Can't Stop",                  a:"Red Hot Chili Peppers",              g:"Rock",      m:["energicas"],                    sc:""},
-  {id:68, t:"The Chain",                   a:"Fleetwood Mac",                      g:"Rock",      m:["chill"],                        sc:""},
-  {id:69, t:"Who Can It Be Now?",           a:"Men at Work",                        g:"Rock",      m:["feliz"],                        sc:""},
-  {id:70, t:"Africa",                      a:"Toto",                               g:"Pop",       m:["feliz"],                        sc:""},
-  {id:71, t:"I'm Not in Love",             a:"10cc",                               g:"Pop",       m:["chill","tristes"],              sc:""},
-  {id:72, t:"Abracadabra",                 a:"Steve Miller Band",                  g:"Rock",      m:["feliz"],                        sc:""},
-  {id:73, t:"Fair Trade",                  a:"Drake ft. Travis Scott",             g:"Hip-Hop",   m:["nocturnas"],                    sc:""},
-  {id:74, t:"Laugh Now Cry Later",         a:"Drake ft. Lil Durk",                 g:"Hip-Hop",   m:["chill"],                        sc:""},
-  {id:75, t:"Not You Too",                 a:"Drake ft. Chris Brown",              g:"R&B",       m:["tristes"],                      sc:""},
-  {id:76, t:"Right Here",                  a:"Justin Bieber ft. Drake",            g:"Pop",       m:["romanticas"],                   sc:""},
-  {id:77, t:"Forget Me Nots",              a:"Patrice Rushen",                     g:"Funk",      m:["feliz","dance"],                sc:""},
-  {id:78, t:"Let's Groove",                a:"Earth, Wind & Fire",                 g:"Funk",      m:["feliz","dance"],                sc:""},
-  {id:79, t:"More Than a Woman",           a:"Bee Gees",                           g:"Disco",     m:["dance"],                        sc:""},
-  {id:80, t:"Holding Out for a Hero",      a:"Bonnie Tyler",                       g:"Rock",      m:["energicas"],                    sc:""},
-  {id:81, t:"Stronger",                    a:"Kanye West",                         g:"Hip-Hop",   m:["energicas"],                    sc:""},
-  {id:82, t:"Gold Digger",                 a:"Kanye West ft. Jamie Foxx",          g:"Hip-Hop",   m:["feliz","energicas"],            sc:""},
-  {id:83, t:"Heartless",                   a:"Kanye West",                         g:"Hip-Hop",   m:["tristes"],                      sc:""},
-  {id:84, t:"Runaway",                     a:"Kanye West",                         g:"Hip-Hop",   m:["tristes","nocturnas"],          sc:""},
-  {id:85, t:"Bound 2",                     a:"Kanye West",                         g:"Hip-Hop",   m:["chill","romanticas"],           sc:""},
-  {id:86, t:"Power",                       a:"Kanye West",                         g:"Hip-Hop",   m:["energicas","nocturnas"],        sc:""},
-  {id:87, t:"All Falls Down",              a:"Kanye West ft. Syleena Johnson",     g:"Hip-Hop",   m:["tristes","chill"],              sc:""},
-  {id:88, t:"Flashing Lights",             a:"Kanye West ft. Dwele",               g:"Hip-Hop",   m:["nocturnas","chill"],            sc:""},
-  {id:89, t:"Good Life",                   a:"Kanye West ft. T-Pain",              g:"Hip-Hop",   m:["feliz","energicas"],            sc:""},
-  {id:90, t:"Gorgeous",                    a:"Kanye West ft. Kid Cudi",            g:"Hip-Hop",   m:["chill","nocturnas"],            sc:""},
-  {id:91, t:"Monster",                     a:"Kanye West ft. Jay-Z & Nicki Minaj", g:"Hip-Hop",   m:["nocturnas","energicas"],        sc:""},
-  {id:92, t:"Welcome to Heartbreak",       a:"Kanye West ft. Kid Cudi",            g:"Hip-Hop",   m:["tristes"],                      sc:""},
-  {id:93, t:"Slow Jamz",                   a:"Twista ft. Kanye West & Jamie Foxx", g:"Hip-Hop",   m:["chill","romanticas"],           sc:""},
-  {id:94, t:"Blood on the Leaves",         a:"Kanye West",                         g:"Hip-Hop",   m:["tristes","nocturnas"],          sc:""},
-  {id:95, t:"P.Y.T. (Pretty Young Thing)", a:"Michael Jackson",                    g:"Pop",       m:["feliz","dance"],                sc:""},
-  {id:96, t:"Black Skinhead",              a:"Kanye West",                         g:"Hip-Hop",   m:["energicas","nocturnas"],        sc:""},
-  {id:97, t:"Sé Morir",                    a:"Andrés Cepeda",                      g:"Latin",     m:["romanticas","tristes"],         sc:""},
-  {id:98, t:"TEST DRIVE",                  a:"Joji",                               g:"R&B",       m:["chill","nocturnas"],            sc:""},
-  {id:99, t:"Tick Tock",                   a:"Joji",                               g:"R&B",       m:["chill","tristes"],              sc:""},
-  {id:100,t:"You Rock My World",           a:"Michael Jackson",                    g:"Pop",       m:["feliz","energicas"],            sc:""},
+/*
+  ┌─────────────────────────────────────────────────────────────┐
+  │  LISTA DE CANCIONES                                          │
+  │  Solo rellena el campo sc:"" con el link de SoundCloud      │
+  │  cuando lo tengas. El resto no lo toques.                   │
+  └─────────────────────────────────────────────────────────────┘
+*/
+const S = [
+  {id:1,  t:"Favorite Lie",               a:"Lil Tecca",                          g:"Hip-Hop",    m:["energicas","nocturnas"],        sc:"https://soundcloud.com/liltecca/favoritelie"},
+  {id:2,  t:"Overnight Celebrity",         a:"Twista ft. Miri Ben-Ari",            g:"Hip-Hop",    m:["chill","feliz"],                sc:"https://soundcloud.com/twistaofficial/twista-overnight-celebrity"},
+  {id:3,  t:"Pyramids",                    a:"Frank Ocean",                        g:"R&B",        m:["chill","nocturnas","tristes"],  sc:"https://soundcloud.com/frankocean/pyramids"},
+  {id:4,  t:"Every Breath You Take",       a:"The Police",                         g:"Rock",       m:["chill","nocturnas"],            sc:""},
+  {id:5,  t:"Dancing in the Moonlight",    a:"Toploader",                          g:"Pop",        m:["feliz","energicas"],            sc:""},
+  {id:6,  t:"New N3on",                    a:"Playboi Carti",                      g:"Hip-Hop",    m:["energicas","nocturnas"],        sc:"https://soundcloud.com/playboicarti/new-n3on"},
+  {id:7,  t:"New Light",                   a:"John Mayer",                         g:"Pop",        m:["chill","feliz"],                sc:""},
+  {id:8,  t:"I Ran (So Far Away)",         a:"A Flock of Seagulls",               g:"New Wave",   m:["energicas","dance"],            sc:""},
+  {id:9,  t:"Paranoid",                    a:"Kanye West ft. Mr Hudson",           g:"Hip-Hop",    m:["nocturnas","energicas"],        sc:""},
+  {id:10, t:"Tieduprightnow",              a:"Parcels",                            g:"Funk",       m:["feliz","dance"],                sc:""},
+  {id:11, t:"Telekinesis",                 a:"Travis Scott ft. SZA",              g:"Hip-Hop",    m:["nocturnas","energicas"],        sc:""},
+  {id:12, t:"WAY BIGGER",                  a:"Don Toliver",                        g:"Hip-Hop",    m:["chill","nocturnas"],            sc:""},
+  {id:13, t:"Chau",                        a:"No Te Va Gustar",                   g:"Latin",      m:["feliz","energicas"],            sc:""},
+  {id:14, t:"El amar y el querer",         a:"José José",                          g:"Latin",      m:["tristes","romanticas"],         sc:""},
+  {id:15, t:"Cama y Mesa",                 a:"Roberto Carlos",                     g:"Latin",      m:["tristes","romanticas"],         sc:"https://soundcloud.com/robertocarlosofficial/cama-y-mesa-cama-e-mesa"},
+  {id:16, t:"Detalles",                    a:"Roberto Carlos",                     g:"Latin",      m:["romanticas","chill"],           sc:""},
+  {id:17, t:"All of the Lights",           a:"Kanye West",                         g:"Hip-Hop",    m:["energicas","nocturnas"],        sc:""},
+  {id:18, t:"Rayando el Sol",              a:"Maná",                               g:"Latin",      m:["feliz","energicas"],            sc:""},
+  {id:19, t:"Baby Be Mine",                a:"Michael Jackson",                    g:"Pop",        m:["feliz","dance"],                sc:""},
+  {id:20, t:"Up There",                    a:"Post Malone",                        g:"Hip-Hop",    m:["tristes","chill"],              sc:""},
+  {id:21, t:"Lo Dudo",                     a:"José José",                          g:"Latin",      m:["tristes","romanticas"],         sc:""},
+  {id:22, t:"Hang On to Your Love",        a:"Sade",                               g:"R&B",        m:["chill","romanticas"],           sc:""},
+  {id:23, t:"Risk It All",                 a:"Bruno Mars",                         g:"Pop",        m:["energicas","feliz"],            sc:""},
+  {id:24, t:"Kilómetros",                  a:"Los Caligaris",                      g:"Latin",      m:["feliz","energicas"],            sc:""},
+  {id:25, t:"Giros",                       a:"Fito Páez",                          g:"Latin",      m:["tristes","chill"],              sc:""},
+  {id:26, t:"Born to Be Alive",            a:"Patrick Hernandez",                  g:"Disco",      m:["feliz","dance"],                sc:""},
+  {id:27, t:"Buenos Aires",                a:"Nathy Peluso",                       g:"Latin",      m:["energicas","feliz"],            sc:""},
+  {id:28, t:"Trama y Desenlace",           a:"Gonzalo Genek ft. Monstar Ragz",    g:"Hip-Hop",    m:["nocturnas","tristes"],          sc:""},
+  {id:29, t:"A Veces",                     a:"Gonzalo Genek",                      g:"Hip-Hop",    m:["chill","nocturnas"],            sc:""},
+  {id:30, t:"Cariño",                      a:"The Marías",                         g:"R&B",        m:["chill","romanticas"],           sc:""},
+  {id:31, t:"Slide",                       a:"Calvin Harris",                      g:"Electronic", m:["dance","energicas"],            sc:""},
+  {id:32, t:"Have You Ever Seen the Rain", a:"Creedence Clearwater Revival",      g:"Rock",       m:["chill","feliz"],                sc:""},
+  {id:33, t:"Luna de Miel en la Mano",     a:"Virus",                              g:"Rock",       m:["energicas"],                    sc:""},
+  {id:34, t:"pensé en ti",                 a:"Jaze ft. Caloncho",                 g:"Latin",      m:["chill","romanticas"],           sc:""},
+  {id:35, t:"Estrechez de Corazón",        a:"Los Prisioneros",                   g:"Rock",       m:["tristes"],                      sc:""},
+  {id:36, t:"Tren al Sur",                 a:"Los Prisioneros",                   g:"Rock",       m:["chill"],                        sc:""},
+  {id:37, t:"Devil in a New Dress",        a:"Kanye West ft. Rick Ross",          g:"Hip-Hop",    m:["nocturnas","chill"],            sc:""},
+  {id:38, t:"Work Out",                    a:"J. Cole",                            g:"Hip-Hop",    m:["energicas"],                    sc:""},
+  {id:39, t:"MIDDLE CHILD",                a:"J. Cole",                            g:"Hip-Hop",    m:["nocturnas"],                    sc:""},
+  {id:40, t:"No Role Modelz",              a:"J. Cole",                            g:"Hip-Hop",    m:["chill"],                        sc:""},
+  {id:41, t:"In the Morning",              a:"J. Cole ft. Drake",                 g:"Hip-Hop",    m:["chill","nocturnas"],            sc:""},
+  {id:42, t:"Sideline Story",              a:"J. Cole",                            g:"Hip-Hop",    m:["tristes"],                      sc:""},
+  {id:43, t:"a m a r i",                   a:"J. Cole",                            g:"Hip-Hop",    m:["chill"],                        sc:""},
+  {id:44, t:"White Dress",                 a:"Kanye West",                         g:"Hip-Hop",    m:["nocturnas","romanticas"],       sc:""},
+  {id:45, t:"Still Dreaming",              a:"Nas ft. Kanye West",                g:"Hip-Hop",    m:["tristes"],                      sc:""},
+  {id:46, t:"Selfish",                     a:"Kanye West ft. John Legend",        g:"Hip-Hop",    m:["tristes","romanticas"],         sc:""},
+  {id:47, t:"Hey Mama",                    a:"Kanye West",                         g:"Hip-Hop",    m:["tristes"],                      sc:""},
+  {id:48, t:"Family Business",             a:"Kanye West",                         g:"Hip-Hop",    m:["chill"],                        sc:""},
+  {id:49, t:"Roses",                       a:"Kanye West",                         g:"Hip-Hop",    m:["feliz"],                        sc:""},
+  {id:50, t:"Hell of a Life",              a:"Kanye West",                         g:"Hip-Hop",    m:["nocturnas"],                    sc:""},
+  {id:51, t:"The New Workout Plan",        a:"Kanye West",                         g:"Hip-Hop",    m:["energicas"],                    sc:""},
+  {id:52, t:"Forrest Gump",                a:"Frank Ocean",                        g:"R&B",        m:["chill","romanticas"],           sc:""},
+  {id:53, t:"Novacane",                    a:"Frank Ocean",                        g:"R&B",        m:["chill","nocturnas"],            sc:""},
+  {id:54, t:"No Church in the Wild",       a:"Jay-Z ft. Kanye West",             g:"Hip-Hop",    m:["nocturnas"],                    sc:""},
+  {id:55, t:"Hand Me Downs",               a:"Mac Miller",                         g:"Hip-Hop",    m:["chill"],                        sc:""},
+  {id:56, t:"Be My Lover",                 a:"La Bouche",                          g:"Electronic", m:["dance","feliz"],                sc:""},
+  {id:57, t:"Close to You",                a:"The Carpenters",                     g:"Classic",    m:["romanticas","chill"],           sc:""},
+  {id:58, t:"I Will Survive",              a:"Gloria Gaynor",                      g:"Disco",      m:["feliz","energicas"],            sc:""},
+  {id:59, t:"September",                   a:"Earth, Wind & Fire",                g:"Funk",       m:["feliz"],                        sc:""},
+  {id:60, t:"Another Day in Paradise",     a:"Phil Collins",                       g:"Pop",        m:["chill"],                        sc:""},
+  {id:61, t:"Roxanne",                     a:"The Police",                         g:"Rock",       m:["tristes"],                      sc:""},
+  {id:62, t:"Don't Let Me Down",           a:"The Beatles",                        g:"Rock",       m:["chill"],                        sc:""},
+  {id:63, t:"Pump Up the Jam",             a:"Technotronic",                       g:"Electronic", m:["energicas","dance"],            sc:""},
+  {id:64, t:"True",                        a:"Spandau Ballet",                     g:"New Wave",   m:["romanticas","chill"],           sc:""},
+  {id:65, t:"That's Life",                 a:"Frank Sinatra",                      g:"Classic",    m:["feliz"],                        sc:""},
+  {id:66, t:"Your Love",                   a:"The Outfield",                       g:"Rock",       m:["energicas"],                    sc:""},
+  {id:67, t:"Can't Stop",                  a:"Red Hot Chili Peppers",             g:"Rock",       m:["energicas"],                    sc:""},
+  {id:68, t:"The Chain",                   a:"Fleetwood Mac",                      g:"Rock",       m:["chill"],                        sc:""},
+  {id:69, t:"Who Can It Be Now?",           a:"Men at Work",                        g:"Rock",       m:["feliz"],                        sc:""},
+  {id:70, t:"Africa",                      a:"Toto",                               g:"Pop",        m:["feliz"],                        sc:""},
+  {id:71, t:"I'm Not in Love",             a:"10cc",                               g:"Pop",        m:["chill","tristes"],              sc:""},
+  {id:72, t:"Abracadabra",                 a:"Steve Miller Band",                 g:"Rock",       m:["feliz"],                        sc:""},
+  {id:73, t:"Fair Trade",                  a:"Drake ft. Travis Scott",            g:"Hip-Hop",    m:["nocturnas"],                    sc:""},
+  {id:74, t:"Laugh Now Cry Later",         a:"Drake ft. Lil Durk",               g:"Hip-Hop",    m:["chill"],                        sc:""},
+  {id:75, t:"Not You Too",                 a:"Drake ft. Chris Brown",             g:"R&B",        m:["tristes"],                      sc:""},
+  {id:76, t:"Right Here",                  a:"Justin Bieber ft. Drake",           g:"Pop",        m:["romanticas"],                   sc:""},
+  {id:77, t:"Forget Me Nots",              a:"Patrice Rushen",                     g:"Funk",       m:["feliz","dance"],                sc:""},
+  {id:78, t:"Let's Groove",                a:"Earth, Wind & Fire",                g:"Funk",       m:["feliz","dance"],                sc:""},
+  {id:79, t:"More Than a Woman",           a:"Bee Gees",                           g:"Disco",      m:["dance"],                        sc:""},
+  {id:80, t:"Holding Out for a Hero",      a:"Bonnie Tyler",                       g:"Rock",       m:["energicas"],                    sc:""},
+  {id:81, t:"Stronger",                    a:"Kanye West",                         g:"Hip-Hop",    m:["energicas"],                    sc:""},
+  {id:82, t:"Gold Digger",                 a:"Kanye West ft. Jamie Foxx",         g:"Hip-Hop",    m:["feliz","energicas"],            sc:""},
+  {id:83, t:"Heartless",                   a:"Kanye West",                         g:"Hip-Hop",    m:["tristes"],                      sc:""},
+  {id:84, t:"Runaway",                     a:"Kanye West",                         g:"Hip-Hop",    m:["tristes","nocturnas"],          sc:""},
+  {id:85, t:"Bound 2",                     a:"Kanye West",                         g:"Hip-Hop",    m:["chill","romanticas"],           sc:""},
+  {id:86, t:"Power",                       a:"Kanye West",                         g:"Hip-Hop",    m:["energicas","nocturnas"],        sc:""},
+  {id:87, t:"All Falls Down",              a:"Kanye West ft. Syleena Johnson",    g:"Hip-Hop",    m:["tristes","chill"],              sc:""},
+  {id:88, t:"Flashing Lights",             a:"Kanye West ft. Dwele",             g:"Hip-Hop",    m:["nocturnas","chill"],            sc:""},
+  {id:89, t:"Good Life",                   a:"Kanye West ft. T-Pain",            g:"Hip-Hop",    m:["feliz","energicas"],            sc:""},
+  {id:90, t:"Gorgeous",                    a:"Kanye West ft. Kid Cudi",          g:"Hip-Hop",    m:["chill","nocturnas"],            sc:""},
+  {id:91, t:"Monster",                     a:"Kanye West ft. Jay-Z & Nicki Minaj",g:"Hip-Hop",  m:["nocturnas","energicas"],        sc:""},
+  {id:92, t:"Welcome to Heartbreak",       a:"Kanye West ft. Kid Cudi",          g:"Hip-Hop",    m:["tristes"],                      sc:""},
+  {id:93, t:"Slow Jamz",                   a:"Twista ft. Kanye West & Jamie Foxx",g:"Hip-Hop",  m:["chill","romanticas"],           sc:""},
+  {id:94, t:"Blood on the Leaves",         a:"Kanye West",                         g:"Hip-Hop",    m:["tristes","nocturnas"],          sc:""},
+  {id:95, t:"P.Y.T. (Pretty Young Thing)", a:"Michael Jackson",                   g:"Pop",        m:["feliz","dance"],                sc:""},
+  {id:96, t:"Black Skinhead",              a:"Kanye West",                         g:"Hip-Hop",    m:["energicas","nocturnas"],        sc:""},
+  {id:97, t:"Sé Morir",                    a:"Andrés Cepeda",                      g:"Latin",      m:["romanticas","tristes"],         sc:""},
+  {id:98, t:"TEST DRIVE",                  a:"Joji",                               g:"R&B",        m:["chill","nocturnas"],            sc:""},
+  {id:99, t:"Tick Tock",                   a:"Joji",                               g:"R&B",        m:["chill","tristes"],              sc:""},
+  {id:100,t:"You Rock My World",           a:"Michael Jackson",                    g:"Pop",        m:["feliz","energicas"],            sc:""},
 ]
-const genres=[...new Set(S.map(s=>s.g))]
 
-/* ════ STATE ════ */
-let SC=null          // SoundCloud Widget instance
-let scReady=false
-let cur=null,q=[],qi=-1,playing=false
-let tickId=null,fakeId=null,wakeLock=null
+const genres = [...new Set(S.map(s => s.g))]
+
+/* ════ STATE — agrupado para evitar inconsistencias ════ */
+const state = {
+  sc:       null,   // SoundCloud Widget instance
+  scReady:  false,
+  cur:      null,   // canción actual
+  queue:    [],     // cola de reproducción
+  qi:       -1,     // índice actual en la cola
+  playing:  false,
+  tickId:   null,
+  fakeId:   null,
+  wakeLock: null,
+}
 
 /* ════ TOAST ════ */
-let toastTimer=null
+let toastTimer = null
 function showToast(msg){
-  const t=document.getElementById('toast')
-  t.textContent=msg;t.classList.add('show')
+  const t = document.getElementById('toast')
+  t.textContent = msg
+  t.classList.add('show')
   clearTimeout(toastTimer)
-  toastTimer=setTimeout(()=>t.classList.remove('show'),2800)
+  toastTimer = setTimeout(() => t.classList.remove('show'), TOAST_DURATION_MS)
 }
 
 /* ════ GREETING ════ */
 function greet(){
-  const h=new Date().getHours()
-  let p,sub
-  if(h>=5&&h<12){p="Buenos días";sub="Arranca el día con buena vibra."}
-  else if(h>=12&&h<19){p="Buenas tardes";sub="¿Qué mood traes esta tarde?"}
-  else{p="Buenas noches";sub="¿Qué mood traes hoy?"}
-  document.getElementById('gtitle').innerHTML=`${p},<br/><em>Lesly.</em>`
-  document.getElementById('gsub').textContent=sub
-  document.getElementById('stat-genres').textContent=genres.length
-  document.getElementById('stat-audio').textContent=S.filter(s=>s.sc).length
+  const h = new Date().getHours()
+  let p, sub
+  if(h >= 5 && h < 12)       { p = "Buenos días";   sub = "Arranca el día con buena vibra." }
+  else if(h >= 12 && h < 19) { p = "Buenas tardes"; sub = "¿Qué mood traes esta tarde?" }
+  else                        { p = "Buenas noches"; sub = "¿Qué mood traes hoy?" }
+  document.getElementById('gtitle').innerHTML = `${p},<br/><em>Lesly.</em>`
+  document.getElementById('gsub').textContent = sub
+  document.getElementById('stat-genres').textContent = genres.length
+  document.getElementById('stat-audio').textContent = S.filter(s => s.sc).length
 }
 
 /* ════ WAKELOCK ════ */
 async function reqWL(){
-  try{if('wakeLock' in navigator){wakeLock=await navigator.wakeLock.request('screen')}}catch(e){}
+  try{
+    if('wakeLock' in navigator)
+      state.wakeLock = await navigator.wakeLock.request('screen')
+  } catch(e){}
 }
-async function relWL(){if(wakeLock){try{await wakeLock.release()}catch(e){}wakeLock=null}}
-document.addEventListener('visibilitychange',async()=>{
-  if(document.visibilityState==='visible'&&playing){
+async function relWL(){
+  if(state.wakeLock){
+    try{ await state.wakeLock.release() } catch(e){}
+    state.wakeLock = null
+  }
+}
+
+/* FIX: Liberar WakeLock al cerrar la pestaña */
+window.addEventListener('beforeunload', () => relWL())
+
+document.addEventListener('visibilitychange', async () => {
+  if(document.visibilityState === 'visible' && state.playing){
     await reqWL()
-    if(cur&&cur.sc&&scReady){
-      setTimeout(()=>{try{SC.play()}catch(e){}},400)
+    if(state.cur?.sc && state.scReady){
+      setTimeout(() => { try{ state.sc.play() } catch(e){} }, 400)
     }
   }
 })
 
 /* ════ MEDIA SESSION ════ */
 function setupMS(song){
-  if(!('mediaSession' in navigator))return
-  navigator.mediaSession.metadata=new MediaMetadata({
-    title:song.t,artist:song.a,album:'Jordy Vibes',
-    artwork:[{src:`https://via.placeholder.com/512x512/131313/c9a96e?text=${encodeURIComponent(song.g[0])}`,sizes:'512x512',type:'image/png'}]
+  if(!('mediaSession' in navigator)) return
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title:   song.t,
+    artist:  song.a,
+    album:   'Jordy Vibes',
+    artwork: [{
+      src:   `https://via.placeholder.com/512x512/131313/c9a96e?text=${encodeURIComponent(song.g[0])}`,
+      sizes: '512x512',
+      type:  'image/png'
+    }]
   })
-  navigator.mediaSession.setActionHandler('play',()=>{if(scReady)SC.play();else{playing=true;updIcon()}})
-  navigator.mediaSession.setActionHandler('pause',()=>{if(scReady)SC.pause();else{playing=false;updIcon()}})
-  navigator.mediaSession.setActionHandler('previoustrack',prevS)
-  navigator.mediaSession.setActionHandler('nexttrack',nextS)
+  navigator.mediaSession.setActionHandler('play',          () => { if(state.scReady) state.sc.play(); else { state.playing = true; updIcon() } })
+  navigator.mediaSession.setActionHandler('pause',         () => { if(state.scReady) state.sc.pause(); else { state.playing = false; updIcon() } })
+  navigator.mediaSession.setActionHandler('previoustrack', prevS)
+  navigator.mediaSession.setActionHandler('nexttrack',     nextS)
 }
 function updMS(){
-  if(!('mediaSession' in navigator))return
-  navigator.mediaSession.playbackState=playing?'playing':'paused'
+  if(!('mediaSession' in navigator)) return
+  navigator.mediaSession.playbackState = state.playing ? 'playing' : 'paused'
 }
 
 /* ════ SOUNDCLOUD WIDGET ════ */
 function initSC(){
-  SC=window.SC.Widget(document.getElementById('sc-iframe'))
-  SC.bind(window.SC.Widget.Events.READY,()=>{
-    scReady=true
+  /* FIX: verificar que la API de SoundCloud cargó correctamente */
+  if(!window.SC){
+    showToast('SoundCloud no disponible — modo sin audio')
+    return
+  }
+  state.sc = window.SC.Widget(document.getElementById('sc-iframe'))
+  state.sc.bind(window.SC.Widget.Events.READY, () => {
+    state.scReady = true
   })
-  SC.bind(window.SC.Widget.Events.PLAY,()=>{
-    playing=true;updIcon();updMS();startTick();reqWL()
+  state.sc.bind(window.SC.Widget.Events.PLAY, () => {
+    state.playing = true; updIcon(); updMS(); startTick(); reqWL()
   })
-  SC.bind(window.SC.Widget.Events.PAUSE,()=>{
-    playing=false;updIcon();updMS();stopTick()
+  state.sc.bind(window.SC.Widget.Events.PAUSE, () => {
+    state.playing = false; updIcon(); updMS(); stopTick()
   })
-  SC.bind(window.SC.Widget.Events.FINISH,()=>{
-    stopTick();nextS()
+  state.sc.bind(window.SC.Widget.Events.FINISH, () => {
+    stopTick(); nextS()
   })
-  SC.bind(window.SC.Widget.Events.ERROR,()=>{
+  state.sc.bind(window.SC.Widget.Events.ERROR, () => {
     showToast('Esta canción no está disponible — saltando...')
-    setTimeout(nextS,1000)
+    setTimeout(nextS, 1000)
   })
 }
 
 /* ════ PROGRESS ════ */
-function startTick(){stopTick();tickId=setInterval(tick,500)}
-function stopTick(){clearInterval(tickId)}
+function startTick(){ stopTick(); state.tickId = setInterval(tick, 500) }
+function stopTick(){ clearInterval(state.tickId) }
 function tick(){
-  if(!SC||!scReady)return
-  SC.getPosition(pos=>{
-    SC.getDuration(dur=>{
-      if(!dur)return
-      setP((pos/dur)*100,pos/1000,dur/1000)
+  if(!state.sc || !state.scReady) return
+  state.sc.getPosition(pos => {
+    state.sc.getDuration(dur => {
+      if(!dur) return
+      setP((pos / dur) * 100, pos / 1000, dur / 1000)
     })
   })
 }
-function setP(pct,c,d){
-  document.getElementById('pfill').style.width=pct+'%'
-  document.getElementById('pthm').style.left=pct+'%'
-  document.getElementById('tcur').textContent=fmt(c)
-  document.getElementById('tdur').textContent=d?fmt(d):'—'
+function setP(pct, c, d){
+  document.getElementById('pfill').style.width  = pct + '%'
+  document.getElementById('pthm').style.left    = pct + '%'
+  document.getElementById('tcur').textContent   = fmt(c)
+  document.getElementById('tdur').textContent   = d ? fmt(d) : '—'
 }
-function fmt(s){const m=Math.floor(s/60),sc=Math.floor(s%60);return`${m}:${sc.toString().padStart(2,'0')}`}
+function fmt(s){
+  const m = Math.floor(s / 60), sc = Math.floor(s % 60)
+  return `${m}:${sc.toString().padStart(2, '0')}`
+}
+
+/* FIX: seekTo con guardias para evitar crash si SC no está listo o canción sin audio */
 function seekTo(e){
-  if(!SC||!scReady)return
-  const r=document.getElementById('ptr').getBoundingClientRect()
-  const pct=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))
-  SC.getDuration(dur=>{SC.seekTo(dur*pct)})
+  if(!state.sc || !state.scReady || !state.cur?.sc) return
+  const r = document.getElementById('ptr').getBoundingClientRect()
+  const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))
+  state.sc.getDuration(dur => {
+    if(!dur) return
+    state.sc.seekTo(dur * pct)
+  })
 }
 function setVol(v){
-  if(SC&&scReady)SC.setVolume(+v)
+  if(state.sc && state.scReady) state.sc.setVolume(+v)
 }
 
 /* ════ PLAYBACK ════ */
-function playSong(idOrSong){
-  const song=typeof idOrSong==='number'?S.find(s=>s.id===idOrSong):idOrSong
-  if(!song)return
-  cur=song
-  const gc=GC[song.g]||{c:"#c9a96e"}
-
+function updatePlayerUI(song){
+  const gc = GC[song.g] || {c:"#c9a96e"}
   document.getElementById('pbar').classList.remove('idle')
-  const th=document.getElementById('pthumb')
-  th.textContent=song.g[0]
-  th.style.color=gc.c;th.style.background=gc.c+'15';th.style.borderColor=gc.c+'35'
-  document.getElementById('ptl').textContent=song.t
-  document.getElementById('pat').textContent=song.a
-  setP(0,0,0);document.getElementById('tdur').textContent='—'
-
-  document.querySelectorAll('.sr').forEach(r=>r.classList.remove('on'))
+  const th = document.getElementById('pthumb')
+  th.textContent        = song.g[0]
+  th.style.color        = gc.c
+  th.style.background   = gc.c + '15'
+  th.style.borderColor  = gc.c + '35'
+  document.getElementById('ptl').textContent = song.t
+  document.getElementById('pat').textContent = song.a
+  setP(0, 0, 0)
+  document.getElementById('tdur').textContent = '—'
+  document.querySelectorAll('.sr').forEach(r => r.classList.remove('on'))
   document.querySelector(`.sr[data-id="${song.id}"]`)?.classList.add('on')
+}
 
-  setupMS(song)
-
-  if(song.sc&&scReady){
-    stopTick();clearInterval(fakeId)
-    // Load new URL into widget and play
-    SC.load(song.sc+'?auto_play=true&hide_related=true&show_comments=false&show_user=false&show_reposts=false&show_teaser=false',{
-      auto_play:true,
-      callback:()=>{SC.setVolume(+document.getElementById('vsl').value)}
+function loadAudio(song){
+  if(song.sc && state.scReady){
+    stopTick()
+    /* FIX: clearInterval del fakeId siempre, no solo a veces */
+    clearInterval(state.fakeId)
+    state.sc.load(song.sc + '?auto_play=true&hide_related=true&show_comments=false&show_user=false&show_reposts=false&show_teaser=false', {
+      auto_play: true,
+      callback:  () => { state.sc.setVolume(+document.getElementById('vsl').value) }
     })
-    playing=true
+    state.playing = true
   } else {
-    if(!song.sc)showToast('Sin audio — búscala en SoundCloud')
-    playing=true;runFake(215)
+    if(!song.sc) showToast('Sin audio — búscala en SoundCloud')
+    state.playing = true
+    runFake(FAKE_SONG_DURATION_S)
   }
-  updIcon();updMS()
+}
+
+function playSong(idOrSong){
+  const song = typeof idOrSong === 'number' ? S.find(s => s.id === idOrSong) : idOrSong
+  if(!song) return
+
+  /* FIX: limpiar SIEMPRE ambos timers al inicio, sin importar el caso */
+  stopTick()
+  clearInterval(state.fakeId)
+
+  state.cur = song
+  updatePlayerUI(song)
+  setupMS(song)
+  loadAudio(song)
+  updIcon()
+  updMS()
 }
 
 function runFake(tot){
-  stopTick();clearInterval(fakeId);let e=0
-  document.getElementById('tdur').textContent=fmt(tot)
-  fakeId=setInterval(()=>{
-    if(!playing)return
-    e++;setP((e/tot)*100,e,tot)
-    if(e>=tot){clearInterval(fakeId);nextS()}
-  },1000)
+  stopTick()
+  clearInterval(state.fakeId)
+  let e = 0
+  document.getElementById('tdur').textContent = fmt(tot)
+  state.fakeId = setInterval(() => {
+    if(!state.playing) return
+    e++
+    setP((e / tot) * 100, e, tot)
+    if(e >= tot){ clearInterval(state.fakeId); nextS() }
+  }, 1000)
 }
 
 function togglePlay(){
-  if(!cur)return
-  if(cur.sc&&scReady){
-    if(playing){SC.pause();relWL()}
-    else{SC.play();reqWL()}
+  if(!state.cur) return
+  if(state.cur.sc && state.scReady){
+    if(state.playing){ state.sc.pause(); relWL() }
+    else             { state.sc.play();  reqWL() }
   } else {
-    playing=!playing;updIcon();updMS()
+    state.playing = !state.playing
+    updIcon()
+    updMS()
   }
 }
+
 function updIcon(){
-  const ic=document.getElementById('picon')
-  if(playing){
-    ic.setAttribute('viewBox','0 0 12 13')
-    ic.innerHTML='<rect x="0" y="0" width="3.8" height="13" rx="1.2" fill="currentColor"/><rect x="8.2" y="0" width="3.8" height="13" rx="1.2" fill="currentColor"/>'
+  const ic = document.getElementById('picon')
+  ic.setAttribute('viewBox', '0 0 12 13')
+  if(state.playing){
+    ic.innerHTML = '<rect x="0" y="0" width="3.8" height="13" rx="1.2" fill="currentColor"/><rect x="8.2" y="0" width="3.8" height="13" rx="1.2" fill="currentColor"/>'
   } else {
-    ic.setAttribute('viewBox','0 0 12 13')
-    ic.innerHTML='<path d="M0 0L12 6.5L0 13V0Z"/>'
+    ic.innerHTML = '<path d="M0 0L12 6.5L0 13V0Z"/>'
   }
 }
+
 function nextS(){
-  if(!q.length)return
-  qi=(qi+1)%q.length;playSong(q[qi])
+  if(!state.queue.length) return
+  state.qi = (state.qi + 1) % state.queue.length
+  playSong(state.queue[state.qi])
 }
+
 function prevS(){
-  if(!q.length)return
-  if(cur&&cur.sc&&scReady){
-    SC.getPosition(pos=>{
-      if(pos>3000){SC.seekTo(0);return}
-      qi=(qi-1+q.length)%q.length;playSong(q[qi])
+  if(!state.queue.length) return
+  if(state.cur?.sc && state.scReady){
+    state.sc.getPosition(pos => {
+      if(pos > PREV_REWIND_THRESHOLD_MS){ state.sc.seekTo(0); return }
+      state.qi = (state.qi - 1 + state.queue.length) % state.queue.length
+      playSong(state.queue[state.qi])
     })
     return
   }
-  qi=(qi-1+q.length)%q.length;playSong(q[qi])
+  state.qi = (state.qi - 1 + state.queue.length) % state.queue.length
+  playSong(state.queue[state.qi])
 }
+
 function closeP(){
-  if(scReady&&SC)SC.pause()
-  stopTick();clearInterval(fakeId);playing=false;cur=null;relWL()
-  if('mediaSession' in navigator)navigator.mediaSession.playbackState='none'
+  if(state.scReady && state.sc) state.sc.pause()
+  stopTick()
+  clearInterval(state.fakeId)
+  state.playing = false
+  state.cur = null
+  relWL()
+  if('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'
   document.getElementById('pbar').classList.add('idle')
-  document.getElementById('ptl').textContent='—'
-  document.getElementById('pat').textContent='Selecciona una canción'
-  const th=document.getElementById('pthumb')
-  th.textContent='—';th.style.color='var(--gold)';th.style.background='var(--s2)';th.style.borderColor='rgba(255,255,255,.1)'
-  setP(0,0,0);document.getElementById('tdur').textContent='—'
-  document.querySelectorAll('.sr').forEach(r=>r.classList.remove('on'))
+  document.getElementById('ptl').textContent = '—'
+  document.getElementById('pat').textContent = 'Selecciona una canción'
+  const th = document.getElementById('pthumb')
+  th.textContent      = '—'
+  th.style.color      = 'var(--gold)'
+  th.style.background = 'var(--s2)'
+  th.style.borderColor = 'rgba(255,255,255,.1)'
+  setP(0, 0, 0)
+  document.getElementById('tdur').textContent = '—'
+  document.querySelectorAll('.sr').forEach(r => r.classList.remove('on'))
   updIcon()
 }
-function playAll(){if(q.length){qi=0;playSong(q[0])}}
+
+function playAll(){ if(state.queue.length){ state.qi = 0; playSong(state.queue[0]) } }
+
 function qplay(id){
-  const idx=q.findIndex(s=>s.id===id)
-  if(idx!==-1)qi=idx
-  playSong(id);closeSb()
+  const idx = state.queue.findIndex(s => s.id === id)
+  if(idx !== -1) state.qi = idx
+  playSong(id)
+  closeSb()
 }
 
 /* ════ RENDER ════ */
 function renderSidebar(){
-  const gl=document.getElementById('glist');gl.innerHTML=''
-  genres.forEach(g=>{
-    const n=S.filter(s=>s.g===g).length
-    const d=document.createElement('div');d.className='ni'
-    d.innerHTML=`<span>${g}</span><span class="bdg">${n}</span>`
-    d.onclick=()=>showGenre(g);gl.appendChild(d)
+  const gl = document.getElementById('glist')
+  gl.innerHTML = ''
+  genres.forEach(g => {
+    const n = S.filter(s => s.g === g).length
+    const d = document.createElement('div')
+    d.className = 'ni'
+    d.innerHTML = `<span>${g}</span><span class="bdg">${n}</span>`
+    /* FIX: usar data-attribute + event listener en vez de onclick con string interpolado (evita XSS) */
+    d.dataset.genre = g
+    d.addEventListener('click', () => showGenre(d.dataset.genre))
+    gl.appendChild(d)
   })
-  const ml=document.getElementById('mlist');ml.innerHTML=''
-  Object.entries(MOODS).forEach(([k,mo])=>{
-    const n=S.filter(s=>s.m.includes(k)).length
-    const d=document.createElement('div');d.className='ni'
-    d.innerHTML=`<span>${mo.l}</span><span class="bdg">${n}</span>`
-    d.onclick=()=>showMood(k);ml.appendChild(d)
+
+  const ml = document.getElementById('mlist')
+  ml.innerHTML = ''
+  Object.entries(MOODS).forEach(([k, mo]) => {
+    const n = S.filter(s => s.m.includes(k)).length
+    const d = document.createElement('div')
+    d.className = 'ni'
+    d.innerHTML = `<span>${mo.l}</span><span class="bdg">${n}</span>`
+    d.dataset.mood = k
+    d.addEventListener('click', () => showMood(d.dataset.mood))
+    ml.appendChild(d)
   })
 }
+
 function renderHome(){
-  const fg=document.getElementById('fg');fg.innerHTML=''
-  genres.forEach(g=>{
-    const n=S.filter(s=>s.g===g).length,gc=GC[g]||{c:"#c9a96e"}
-    fg.innerHTML+=`<div class="gc" style="--c:${gc.c}" onclick="showGenre('${g.replace(/'/g,"\\'")}')">
+  const fg = document.getElementById('fg')
+  fg.innerHTML = ''
+  genres.forEach(g => {
+    const n = S.filter(s => s.g === g).length
+    const gc = GC[g] || {c:"#c9a96e"}
+    /* FIX: usar data-attribute + event listener en vez de onclick con string interpolado */
+    const el = document.createElement('div')
+    el.className = 'gc'
+    el.style.cssText = `--c:${gc.c}`
+    el.innerHTML = `
       <div class="gltr" style="background:${gc.c}20;color:${gc.c}">${g[0]}</div>
-      <div class="gname">${g}</div><div class="gcnt">${n} canciones</div></div>`
+      <div class="gname">${g}</div>
+      <div class="gcnt">${n} canciones</div>`
+    el.dataset.genre = g
+    el.addEventListener('click', () => showGenre(el.dataset.genre))
+    fg.appendChild(el)
   })
-  const fm=document.getElementById('fm');fm.innerHTML=''
-  Object.entries(MOODS).forEach(([k,mo])=>{
-    fm.innerHTML+=`<div class="mc" style="--c:${mo.c}" onclick="showMood('${k}')">
+
+  const fm = document.getElementById('fm')
+  fm.innerHTML = ''
+  Object.entries(MOODS).forEach(([k, mo]) => {
+    const el = document.createElement('div')
+    el.className = 'mc'
+    el.style.cssText = `--c:${mo.c}`
+    el.innerHTML = `
       <div class="mdot" style="background:${mo.c}20;color:${mo.c}">${mo.l[0]}</div>
-      <div class="mlbl">${mo.l}</div></div>`
+      <div class="mlbl">${mo.l}</div>`
+    el.dataset.mood = k
+    el.addEventListener('click', () => showMood(el.dataset.mood))
+    fm.appendChild(el)
   })
 }
-function renderList(list,cid){
-  const c=document.getElementById(cid);c.innerHTML=''
-  if(!list.length){c.innerHTML='<div class="empty">Sin canciones aquí.</div>';return}
-  list.forEach((song,i)=>{
-    const row=document.createElement('div')
-    row.className='sr'+(song.sc?'':' noaud')
-    row.dataset.id=song.id
-    row.innerHTML=`
+
+function renderList(list, cid){
+  const c = document.getElementById(cid)
+  c.innerHTML = ''
+  if(!list.length){ c.innerHTML = '<div class="empty">Sin canciones aquí.</div>'; return }
+  list.forEach((song, i) => {
+    const row = document.createElement('div')
+    row.className = 'sr' + (song.sc ? '' : ' noaud')
+    row.dataset.id = song.id
+    row.innerHTML = `
       <div class="ncell">
-        <span class="snum">${i+1}</span>
-        <button class="spb" onclick="event.stopPropagation();qplay(${song.id})">&#9654;</button>
+        <span class="snum">${i + 1}</span>
+        <button class="spb">&#9654;</button>
       </div>
       <div>
         <div class="stl">${song.t}</div>
         <div class="sat">${song.a}</div>
       </div>
-      <div class="stgs">${song.m.map(mk=>`<span class="stag">${MOODS[mk]?.l||mk}</span>`).join('')}</div>
+      <div class="stgs">${song.m.map(mk => `<span class="stag">${MOODS[mk]?.l || mk}</span>`).join('')}</div>
       <div class="sgen">${song.g}</div>`
-    row.addEventListener('click',()=>qplay(song.id))
+    row.querySelector('.spb').addEventListener('click', e => { e.stopPropagation(); qplay(song.id) })
+    row.addEventListener('click', () => qplay(song.id))
     c.appendChild(row)
   })
 }
 
 /* ════ VIEWS ════ */
 function setView(id){
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('act'))
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('act'))
   document.getElementById(id).classList.add('act')
-  document.getElementById('main').scrollTop=0
+  document.getElementById('main').scrollTop = 0
 }
 function setNav(id){
-  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('act'))
-  if(id)document.getElementById(id)?.classList.add('act')
+  document.querySelectorAll('.ni').forEach(n => n.classList.remove('act'))
+  if(id) document.getElementById(id)?.classList.add('act')
 }
-function showHome(){setView('hv');setNav('nav-home');q=[...S];document.getElementById('sinp').value='';closeSb()}
-function showAll(){setView('av');setNav('nav-all');q=[...S];qi=0;renderList(S,'al');closeSb()}
+function showHome(){
+  setView('hv'); setNav('nav-home')
+  state.queue = [...S]
+  document.getElementById('sinp').value = ''
+  closeSb()
+}
+function showAll(){
+  setView('av'); setNav('nav-all')
+  state.queue = [...S]; state.qi = 0
+  renderList(S, 'al'); closeSb()
+}
 function showGenre(g){
-  const f=S.filter(s=>s.g===g);q=f;qi=0
-  document.getElementById('vtl').textContent=g
-  document.getElementById('vsb').textContent=`${f.length} canciones · Género`
-  renderList(f,'sg');setView('lv');setNav(null);closeSb()
+  const f = S.filter(s => s.g === g)
+  state.queue = f; state.qi = 0
+  document.getElementById('vtl').textContent = g
+  document.getElementById('vsb').textContent = `${f.length} canciones · Género`
+  renderList(f, 'sg'); setView('lv'); setNav(null); closeSb()
 }
 function showMood(mk){
-  const f=S.filter(s=>s.m.includes(mk));q=f;qi=0
-  document.getElementById('vtl').textContent=MOODS[mk]?.l||mk
-  document.getElementById('vsb').textContent=`${f.length} canciones · Mood`
-  renderList(f,'sg');setView('lv');setNav(null);closeSb()
+  const f = S.filter(s => s.m.includes(mk))
+  state.queue = f; state.qi = 0
+  document.getElementById('vtl').textContent = MOODS[mk]?.l || mk
+  document.getElementById('vsb').textContent = `${f.length} canciones · Mood`
+  renderList(f, 'sg'); setView('lv'); setNav(null); closeSb()
+}
+
+/* FIX: Debounce en la búsqueda → no filtra en cada keystroke */
+let searchTimer = null
+function handleSearchInput(v){
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => doSearch(v), SEARCH_DEBOUNCE_MS)
 }
 function doSearch(v){
-  if(!v.trim()){showHome();return}
-  const r=S.filter(s=>s.t.toLowerCase().includes(v.toLowerCase())||s.a.toLowerCase().includes(v.toLowerCase())||s.g.toLowerCase().includes(v.toLowerCase()))
-  q=r;qi=0
-  document.getElementById('stl2').textContent=`"${v}"`
-  document.getElementById('ssb2').textContent=`${r.length} resultado${r.length!==1?'s':''}`
-  renderList(r,'sr2');setView('sv');setNav(null)
+  if(!v.trim()){ showHome(); return }
+  const r = S.filter(s =>
+    s.t.toLowerCase().includes(v.toLowerCase()) ||
+    s.a.toLowerCase().includes(v.toLowerCase()) ||
+    s.g.toLowerCase().includes(v.toLowerCase())
+  )
+  state.queue = r; state.qi = 0
+  document.getElementById('stl2').textContent = `"${v}"`
+  document.getElementById('ssb2').textContent = `${r.length} resultado${r.length !== 1 ? 's' : ''}`
+  renderList(r, 'sr2'); setView('sv'); setNav(null)
 }
 
 /* ════ MOBILE SIDEBAR ════ */
 function toggleSb(){
-  const s=document.getElementById('sb'),o=document.getElementById('ov')
-  const open=s.classList.toggle('open')
-  o.classList.toggle('hidden',!open)
+  const s = document.getElementById('sb'), o = document.getElementById('ov')
+  const open = s.classList.toggle('open')
+  o.classList.toggle('hidden', !open)
 }
 function closeSb(){
   document.getElementById('sb').classList.remove('open')
@@ -870,13 +1043,12 @@ function closeSb(){
 }
 
 /* ════ INIT ════ */
-window.onload=()=>{
+window.onload = () => {
   greet()
   renderSidebar()
   renderHome()
   showHome()
-  // Init SoundCloud widget after a small delay
-  setTimeout(initSC, 800)
+  setTimeout(initSC, SC_INIT_DELAY_MS)
 }
 </script>
 </body>
