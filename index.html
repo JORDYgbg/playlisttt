@@ -570,23 +570,17 @@ const S=[
 ]
 const genres=[...new Set(S.map(s=>s.g))]
 
-/* ════ INVIDIOUS ════ */
-// Instancias públicas — si una falla, prueba la siguiente
-const INV_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.nerdvpn.de',
-  'https://invidious.privacyredirect.com',
-  'https://yt.cdaut.de',
-]
-let invIdx = 0
+/* ════ BACKEND PROXY ════ */
+const BACKEND = 'https://jordyyvibes-api.onrender.com'
 
 async function getAudioUrl(videoId) {
   try {
-    const res = await fetch(`https://jordyyvibes-api.onrender.com/audio?v=${videoId}`)
+    const res = await fetch(`${BACKEND}/audio?v=${videoId}`, {signal: AbortSignal.timeout(15000)})
     if (!res.ok) return null
     const data = await res.json()
     return data.url || null
   } catch(e) {
+    console.warn('Backend error:', e.message)
     return null
   }
 }
