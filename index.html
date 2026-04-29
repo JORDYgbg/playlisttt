@@ -581,35 +581,14 @@ const INV_INSTANCES = [
 let invIdx = 0
 
 async function getAudioUrl(videoId) {
-  // Prueba instancias en orden hasta que una funcione
-  for (let attempt = 0; attempt < INV_INSTANCES.length; attempt++) {
-    const base = INV_INSTANCES[(invIdx + attempt) % INV_INSTANCES.length]
-    try {
-      const res = await fetch(`${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`, {signal: AbortSignal.timeout(8000)})
-      if (!res.ok) continue
-      const data = await res.json()
-
-      // Busca el mejor audio — primero adaptiveFormats (solo audio), luego formatStreams
-      const audioFormats = (data.adaptiveFormats || [])
-        .filter(f => f.type && f.type.startsWith('audio/'))
-        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
-
-      if (audioFormats.length > 0) {
-        invIdx = (invIdx + attempt) % INV_INSTANCES.length // usar esta instancia de ahora en adelante
-        return audioFormats[0].url
-      }
-
-      // Fallback a formatStreams (audio+video pero funciona)
-      const streams = data.formatStreams || []
-      if (streams.length > 0) {
-        invIdx = (invIdx + attempt) % INV_INSTANCES.length
-        return streams[streams.length - 1].url
-      }
-    } catch(e) {
-      console.warn(`Instancia ${base} falló:`, e.message)
-    }
+  try {
+    const res = await fetch(`https://jordyyvibes-api.onrender.com/audio?v=${videoId}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.url || null
+  } catch(e) {
+    return null
   }
-  return null
 }
 
 /* ════ STATE ════ */
