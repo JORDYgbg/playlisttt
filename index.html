@@ -667,6 +667,14 @@ document.addEventListener('visibilitychange',async()=>{
 /* ════ MEDIA SESSION API — pantalla de bloqueo ════ */
 function setupMediaSession(song){
   if(!('mediaSession' in navigator))return
+  
+  // Limpiar handlers anteriores primero
+  navigator.mediaSession.setActionHandler('play', null)
+  navigator.mediaSession.setActionHandler('pause', null)
+  navigator.mediaSession.setActionHandler('previoustrack', null)
+  navigator.mediaSession.setActionHandler('nexttrack', null)
+  navigator.mediaSession.setActionHandler('seekto', null)
+
   navigator.mediaSession.metadata=new MediaMetadata({
     title:song.t,
     artist:song.a,
@@ -684,8 +692,8 @@ function setupMediaSession(song){
     if(cur&&cur.y&&ytOk)yt.pauseVideo()
     else{playing=false;updIcon()}
   })
-  navigator.mediaSession.setActionHandler('previoustrack',prevS)
-  navigator.mediaSession.setActionHandler('nexttrack',nextS)
+  navigator.mediaSession.setActionHandler('previoustrack', prevS)
+  navigator.mediaSession.setActionHandler('nexttrack', nextS)
   navigator.mediaSession.setActionHandler('seekto',(d)=>{
     if(cur&&cur.y&&ytOk)yt.seekTo(d.seekTime,true)
   })
