@@ -775,20 +775,12 @@ function onSC(e){
     hideAdOverlay();
   }
   else if(e.data === ST.PAUSED){
-    // If userPaused=true: user did it intentionally → respect it
-    if(userPaused){
-      playing = false;
-      updIcon();
-      stopTick();
-      navigator.mediaSession&&(navigator.mediaSession.playbackState='paused');
-    } else {
-      // YouTube paused by itself (ad transition, network, etc.) → resume
-      setTimeout(()=>{
-        if(!userPaused && cur && cur.y && ytOk && yt){
-          try{ yt.playVideo(); }catch(err){}
-        }
-      }, 700);
-    }
+    // ALWAYS respect the pause — whether from user, lock screen, or YouTube itself.
+    // The watchdog handles unexpected stops separately via stall detection.
+    playing = false;
+    updIcon();
+    stopTick();
+    if(navigator.mediaSession) navigator.mediaSession.playbackState = 'paused';
   }
   else if(e.data === ST.ENDED){
     if(cur && cur.y) nextS();
@@ -810,13 +802,14 @@ function startWatchdog(){
 
   watchdogId = setInterval(()=>{
     if(!cur || !cur.y || !ytOk || !yt) return;
-    if(userPaused) return; // respect intentional pause
+    if(userPaused) return;
 
     const st = yt.getPlayerState?.();
     const ct = yt.getCurrentTime?.() || 0;
     const dur = yt.getDuration?.() || 0;
 
-    // Stall: time not advancing while supposed to be playing
+    // ONLY handle stall: time frozen while PLAYING
+    // Never touch PAUSED state — that belongs to the user
     if(st === YT.PlayerState.PLAYING){
       if(ct === wdLastTime && ct > 0){
         wdStallCount++;
@@ -1236,16 +1229,8 @@ function closeSb(){
 
 /* ── Visibility change: resume if page hidden then visible ── */
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible' && cur?.y && ytOk && yt && !userPaused){
-    const st=yt.getPlayerState?.();
-    if(st!==YT.PlayerState.PLAYING){
-      setTimeout(()=>{
-        if(!userPaused) try{ yt.playVideo(); }catch(e){}
-      },400);
-    }
-  }
-  // Update media session position when coming back
-  if(document.visibilityState==='visible') updateMediaPosition();
+  // Only update position state when coming back — never force play
+  if(document.visibilityState === 'visible') updateMediaPosition();
 });
 
 /* ── Prevent screen sleep on mobile while playing ── */
