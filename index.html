@@ -760,7 +760,8 @@ window.onYouTubeIframeAPIReady=()=>{
   });
 };
 
-// Track if user manually paused
+// userPaused = true means the USER chose to pause (from app or lock screen)
+// The watchdog must never override this
 let userPaused = false;
 
 function onSC(e){
@@ -768,38 +769,36 @@ function onSC(e){
 
   if(e.data === ST.PLAYING){
     playing = true;
-    userPaused = false;
     updIcon();
     startTick();
     updateMediaSession();
     hideAdOverlay();
   }
   else if(e.data === ST.PAUSED){
-    // Only treat as real pause if user explicitly did it
-    if(!userPaused){
-      // Unexpected pause — YouTube paused by itself (ad, buffering, etc.)
-      // Resume after a short delay
+    // If userPaused=true: user did it intentionally → respect it
+    if(userPaused){
+      playing = false;
+      updIcon();
+      stopTick();
+      navigator.mediaSession&&(navigator.mediaSession.playbackState='paused');
+    } else {
+      // YouTube paused by itself (ad transition, network, etc.) → resume
       setTimeout(()=>{
         if(!userPaused && cur && cur.y && ytOk && yt){
           try{ yt.playVideo(); }catch(err){}
         }
-      }, 800);
-    } else {
-      playing = false;
-      updIcon();
-      stopTick();
+      }, 700);
     }
   }
   else if(e.data === ST.ENDED){
     if(cur && cur.y) nextS();
   }
-  // State -1 (unstarted) or 3 (buffering): do nothing, watchdog handles it
 }
 
-/* ── MASTER WATCHDOG: runs every second while a song is loaded ──
-   Handles ALL the ways YouTube can silently stop:
-   ads, network hiccup, background tab, random pauses
-─────────────────────────────────────────────────────────────── */
+/* ── MASTER WATCHDOG ──
+   Only handles STALL (frozen time) — does NOT fight the pause button.
+   Pause/resume logic stays in onSC and Media Session handlers.
+──────────────────────────────────────────────────────────────── */
 let watchdogId = null;
 let wdLastTime = -1;
 let wdStallCount = 0;
@@ -811,28 +810,19 @@ function startWatchdog(){
 
   watchdogId = setInterval(()=>{
     if(!cur || !cur.y || !ytOk || !yt) return;
-    if(userPaused) return; // user paused on purpose, leave it
+    if(userPaused) return; // respect intentional pause
 
     const st = yt.getPlayerState?.();
     const ct = yt.getCurrentTime?.() || 0;
     const dur = yt.getDuration?.() || 0;
 
-    // Case 1: player is PAUSED or UNSTARTED and we expect to be playing → resume
-    if(st === YT.PlayerState.PAUSED || st === -1){
-      try{ yt.playVideo(); }catch(e){}
-      return;
-    }
-
-    // Case 2: player is PLAYING but time is frozen (stall / buffering stuck)
+    // Stall: time not advancing while supposed to be playing
     if(st === YT.PlayerState.PLAYING){
       if(ct === wdLastTime && ct > 0){
         wdStallCount++;
-        if(wdStallCount >= 5){ // 5s frozen → force seek +0.5s to unblock
+        if(wdStallCount >= 5){
           wdStallCount = 0;
-          try{
-            yt.seekTo(ct + 0.5, true);
-            yt.playVideo();
-          }catch(e){}
+          try{ yt.seekTo(ct + 0.5, true); yt.playVideo(); }catch(e){}
         }
       } else {
         wdStallCount = 0;
@@ -840,7 +830,7 @@ function startWatchdog(){
       wdLastTime = ct;
     }
 
-    // Case 3: ad detected (very short duration while we expect a real song)
+    // Ad detection
     if(st === YT.PlayerState.PLAYING && dur > 0 && dur < 35){
       showAdOverlay();
     }
@@ -849,10 +839,8 @@ function startWatchdog(){
 }
 
 function stopWatchdog(){ clearInterval(watchdogId); wdLastTime = -1; wdStallCount = 0; }
-
-// Keep legacy stall names so nothing else breaks
-function startStallCheck(){ /* handled by watchdog */ }
-function stopStallCheck(){ /* handled by watchdog */ }
+function startStallCheck(){}
+function stopStallCheck(){}
 
 /* ── AD DETECTION & AUTO-SKIP ── */
 let adWatchdog=null;
@@ -889,32 +877,54 @@ function skipAd(){
    MEDIA SESSION — lock screen controls
 ════════════════════════════════════ */
 function updateMediaSession(){
-  if(!('mediaSession' in navigator)||!cur) return;
-  const thumb=`https://img.youtube.com/vi/${cur.y}/mqdefault.jpg`;
-  navigator.mediaSession.metadata=new MediaMetadata({
-    title:cur.t,
-    artist:cur.a,
-    album:cur.g,
-    artwork:cur.y?[{src:thumb,sizes:'320x180',type:'image/jpeg'}]:[],
+  if(!('mediaSession' in navigator) || !cur) return;
+
+  const thumb = cur.y ? `https://img.youtube.com/vi/${cur.y}/mqdefault.jpg` : '';
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: cur.t,
+    artist: cur.a,
+    album: cur.g,
+    artwork: thumb ? [{src:thumb, sizes:'320x180', type:'image/jpeg'}] : [],
   });
-  navigator.mediaSession.setActionHandler('play',()=>{
-    userPaused=false;
+
+  // PLAY — from lock screen or notification
+  navigator.mediaSession.setActionHandler('play', ()=>{
+    userPaused = false;
     if(yt) yt.playVideo();
-    playing=true; updIcon();
-    navigator.mediaSession.playbackState='playing';
+    playing = true;
+    updIcon();
+    startTick();
+    navigator.mediaSession.playbackState = 'playing';
   });
-  navigator.mediaSession.setActionHandler('pause',()=>{
-    userPaused=true;
+
+  // PAUSE — from lock screen or notification
+  navigator.mediaSession.setActionHandler('pause', ()=>{
+    userPaused = true;   // ← this is the key: stop watchdog from fighting it
     if(yt) yt.pauseVideo();
-    playing=false; updIcon(); stopTick();
-    navigator.mediaSession.playbackState='paused';
+    playing = false;
+    updIcon();
+    stopTick();
+    navigator.mediaSession.playbackState = 'paused';
   });
-  navigator.mediaSession.setActionHandler('previoustrack',()=>{ userPaused=false; prevS(); });
-  navigator.mediaSession.setActionHandler('nexttrack',()=>{ userPaused=false; nextS(); });
-  navigator.mediaSession.setActionHandler('seekto',(d)=>{
-    if(yt&&d.seekTime!==undefined) yt.seekTo(d.seekTime,true);
+
+  // PREVIOUS
+  navigator.mediaSession.setActionHandler('previoustrack', ()=>{
+    userPaused = false;
+    prevS();
   });
-  navigator.mediaSession.playbackState='playing';
+
+  // NEXT
+  navigator.mediaSession.setActionHandler('nexttrack', ()=>{
+    userPaused = false;
+    nextS();
+  });
+
+  // SEEK (progress bar from lock screen)
+  navigator.mediaSession.setActionHandler('seekto', (d)=>{
+    if(yt && d.seekTime !== undefined) yt.seekTo(d.seekTime, true);
+  });
+
+  navigator.mediaSession.playbackState = 'playing';
 }
 
 function updateMediaPosition(){
@@ -1016,10 +1026,10 @@ function playSong(idOrSong){
 
   if(song.y && ytOk && yt){
     clearInterval(fakeId); stopTick(); stopWatchdog();
+    userPaused = false;   // new song = fresh start
     yt.loadVideoById(song.y);
     yt.setVolume(+document.getElementById('vsl').value);
-    playing=true;
-    userPaused=false;
+    playing = true;
     startWatchdog();
     startAdCheck();
   } else if(song.y && !ytOk){
