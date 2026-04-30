@@ -266,6 +266,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
   .ov{display:block;}.ov.hidden{display:none;}
   .mbtn{display:flex;}
   .hctr{display:none;}
+  .mob-search-btn{display:flex;}
 
   /* hero mobile */
   .hero{padding:26px 20px 22px;}.htitle{font-size:28px;}
@@ -315,6 +316,46 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
   .prow{width:100%;}
 }
 
+/* ── MOBILE SEARCH BUTTON & OVERLAY ── */
+.mob-search-btn{
+  display:none;
+  background:none;border:none;
+  color:var(--muted);
+  cursor:pointer;
+  padding:6px;border-radius:6px;
+  transition:color .15s;
+  align-items:center;justify-content:center;
+}
+.mob-search-btn:hover{color:var(--text);}
+
+.mob-search-overlay{
+  position:fixed;
+  top:var(--hh);left:0;right:0;
+  background:rgba(10,10,10,.98);
+  backdrop-filter:blur(24px);
+  border-bottom:1px solid var(--bd2);
+  z-index:150;
+  padding:10px 16px;
+  transition:opacity .2s,transform .2s;
+}
+.mob-search-overlay.hidden{
+  opacity:0;pointer-events:none;transform:translateY(-8px);
+}
+.mob-search-inner{
+  display:flex;align-items:center;gap:10px;
+  background:var(--s2);
+  border:1px solid var(--bd2);
+  border-radius:10px;
+  padding:0 14px;
+  height:40px;
+}
+.mob-search-inner input{
+  flex:1;background:transparent;border:none;outline:none;
+  color:var(--text);font-family:'Outfit',sans-serif;
+  font-size:14px;
+}
+.mob-search-inner input::placeholder{color:var(--muted);}
+
 /* YT hidden */
 #ytwrp{position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0.01;}
 </style>
@@ -347,14 +388,35 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
     </div>
   </div>
   <div class="hrgt">
-    <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
-      <div style="width:6px;height:6px;background:#4caf7d;border-radius:50%;box-shadow:0 0 6px rgba(76,175,125,.6);"></div>
-      <span class="unm" style="display:none" id="deskhdr">Jordy · EC</span>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <!-- Lupa mobile: solo visible en móvil -->
+      <button class="mob-search-btn" id="mobSearchBtn" onclick="toggleMobSearch()" aria-label="Buscar">
+        <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
+          <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+          <line x1="9.5" y1="9.5" x2="13" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+        <div style="width:6px;height:6px;background:#4caf7d;border-radius:50%;box-shadow:0 0 6px rgba(76,175,125,.6);flex-shrink:0;"></div>
+        <span id="deskhdr" style="display:none">Lesly · EC</span>
+      </div>
     </div>
   </div>
 </header>
 
 <div class="ov hidden" id="ov" onclick="closeSb()"></div>
+
+<!-- Mobile search overlay -->
+<div id="mob-search-overlay" class="mob-search-overlay hidden">
+  <div class="mob-search-inner">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;opacity:.4">
+      <circle cx="6" cy="6" r="4.5" stroke="white" stroke-width="1.4"/>
+      <line x1="9.5" y1="9.5" x2="13" y2="13" stroke="white" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    <input type="text" id="sinp-mob" placeholder="Buscar canción o artista…" oninput="doSearch(this.value)" autocomplete="off"/>
+    <button onclick="closeMobSearch()" style="background:none;border:none;color:var(--muted);padding:4px;cursor:pointer;font-size:13px;">✕</button>
+  </div>
+</div>
 
 <aside id="sb">
   <div class="ss">
@@ -1206,12 +1268,37 @@ function showAll(){ setView('av'); setNav('nav-all'); q=[...S]; qi=0; renderList
 function showGenre(g){ const f=S.filter(s=>s.g===g); q=f; qi=0; document.getElementById('vtl').textContent=g; document.getElementById('vsb').textContent=`${f.length} canciones · Género`; renderList(f,'sg'); setView('lv'); setNav(null); closeSb(); }
 function showMood(mk){ const f=S.filter(s=>s.m.includes(mk)); q=f; qi=0; document.getElementById('vtl').textContent=MOODS[mk]?.l||mk; document.getElementById('vsb').textContent=`${f.length} canciones · Mood`; renderList(f,'sg'); setView('lv'); setNav(null); closeSb(); }
 function doSearch(v){
+  // sync both inputs
+  document.getElementById('sinp').value = v;
+  const mobInp = document.getElementById('sinp-mob');
+  if(mobInp) mobInp.value = v;
+
   if(!v.trim()){ showHome(); return; }
   const r=S.filter(s=>s.t.toLowerCase().includes(v.toLowerCase())||s.a.toLowerCase().includes(v.toLowerCase())||s.g.toLowerCase().includes(v.toLowerCase()));
   q=r; qi=0;
   document.getElementById('stl2').textContent=`"${v}"`;
   document.getElementById('ssb2').textContent=`${r.length} resultado${r.length!==1?'s':''}`;
   renderList(r,'sr2'); setView('sv'); setNav(null);
+}
+
+/* ════════════════════════════════════
+   MOBILE SEARCH
+════════════════════════════════════ */
+function toggleMobSearch(){
+  const overlay = document.getElementById('mob-search-overlay');
+  const isHidden = overlay.classList.contains('hidden');
+  if(isHidden){
+    overlay.classList.remove('hidden');
+    setTimeout(()=> document.getElementById('sinp-mob').focus(), 50);
+  } else {
+    closeMobSearch();
+  }
+}
+function closeMobSearch(){
+  const overlay = document.getElementById('mob-search-overlay');
+  overlay.classList.add('hidden');
+  const inp = document.getElementById('sinp-mob');
+  if(inp.value){ inp.value=''; showHome(); }
 }
 
 /* ════════════════════════════════════
@@ -1254,8 +1341,11 @@ window.onload=()=>{
   showHome();
   loadYT();
 
-  // Show desktop label
-  if(window.innerWidth>720) document.getElementById('deskhdr').style.display='inline';
+  // Show desktop label only on desktop
+  if(window.innerWidth > 720){
+    const dh = document.getElementById('deskhdr');
+    if(dh) dh.style.display = 'inline';
+  }
 };
 </script>
 </body>
