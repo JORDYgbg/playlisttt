@@ -335,7 +335,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
         <rect y="11.2" width="18" height="1.8" rx=".9" fill="currentColor"/>
       </svg>
     </button>
-    <div class="logo">Jordy <span>Vibes</span></div>
+    <div class="logo">J. <span>Vibes</span></div>
   </div>
   <div class="hctr">
     <div class="sbar">
@@ -376,7 +376,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px
   <div id="hv" class="view act">
     <div class="hero">
       <div class="hlbl">Tu espacio personal</div>
-      <div class="htitle" id="gtitle">Buenas noches,<br/><em>Jordy.</em></div>
+      <div class="htitle" id="gtitle">Buenas noches,<br/><em>Lesly.</em></div>
       <div class="hsub" id="gsub">¿Qué mood traes hoy?</div>
       <div class="hstats">
         <div class="hstat"><span class="hstat-n">100</span><span class="hstat-l">Canciones</span></div>
@@ -731,7 +731,7 @@ function greet(){
   if(h>=5&&h<12){p="Buenos días";sub="Arranca el día con buena vibra.";}
   else if(h>=12&&h<19){p="Buenas tardes";sub="¿Qué mood traes esta tarde?";}
   else{p="Buenas noches";sub="La noche tiene el mejor mood.";}
-  document.getElementById('gtitle').innerHTML=`${p},<br/><em>Jordy.</em>`;
+  document.getElementById('gtitle').innerHTML=`${p},<br/><em>Lesly.</em>`;
   document.getElementById('gsub').textContent=sub;
   document.getElementById('stat-genres').textContent=genres.length;
   document.getElementById('stat-audio').textContent=S.filter(s=>s.y).length;
@@ -760,66 +760,99 @@ window.onYouTubeIframeAPIReady=()=>{
   });
 };
 
-function onSC(e){
-  const ST=YT.PlayerState;
-  clearInterval(adCheckId);
+// Track if user manually paused
+let userPaused = false;
 
-  if(e.data===ST.PLAYING){
-    playing=true; updIcon(); startTick();
+function onSC(e){
+  const ST = YT.PlayerState;
+
+  if(e.data === ST.PLAYING){
+    playing = true;
+    userPaused = false;
+    updIcon();
+    startTick();
     updateMediaSession();
     hideAdOverlay();
-    // reset stall detection
-    stallCount=0; lastTime=-1;
-    startStallCheck();
   }
-  else if(e.data===ST.PAUSED){
-    // Check if it's an ad pause (duration mismatch)
-    if(yt && cur){
-      const dur=yt.getDuration();
-      // If paused very early with tiny duration it might be ad transition
-      // Just auto-resume after 300ms if user didn't pause
+  else if(e.data === ST.PAUSED){
+    // Only treat as real pause if user explicitly did it
+    if(!userPaused){
+      // Unexpected pause — YouTube paused by itself (ad, buffering, etc.)
+      // Resume after a short delay
       setTimeout(()=>{
-        if(playing && yt && yt.getPlayerState()===ST.PAUSED){
-          yt.playVideo();
+        if(!userPaused && cur && cur.y && ytOk && yt){
+          try{ yt.playVideo(); }catch(err){}
         }
-      },600);
+      }, 800);
+    } else {
+      playing = false;
+      updIcon();
+      stopTick();
     }
-    playing=false; updIcon(); stopTick();
-    stopStallCheck();
   }
-  else if(e.data===ST.ENDED){
-    stopStallCheck();
+  else if(e.data === ST.ENDED){
     if(cur && cur.y) nextS();
   }
-  else if(e.data===ST.BUFFERING){
-    // Buffering is fine, don't stop
-  }
-  else if(e.data===-1){
-    // unstarted — might be ad or video not ready
-  }
-  // State 3 = BUFFERING treated normally
+  // State -1 (unstarted) or 3 (buffering): do nothing, watchdog handles it
 }
 
-/* ── STALL CHECK: if currentTime doesn't advance, restart ── */
-function startStallCheck(){
-  stopStallCheck();
-  stallCheckId=setInterval(()=>{
-    if(!yt||!playing) return;
-    const ct=yt.getCurrentTime?.()||0;
-    if(ct===lastTime && ct>0){
-      stallCount++;
-      if(stallCount>=4){ // ~4s stall
-        stallCount=0;
-        // try resuming
-        try{ yt.playVideo(); }catch(e){}
-      }
-    } else {
-      stallCount=0;
+/* ── MASTER WATCHDOG: runs every second while a song is loaded ──
+   Handles ALL the ways YouTube can silently stop:
+   ads, network hiccup, background tab, random pauses
+─────────────────────────────────────────────────────────────── */
+let watchdogId = null;
+let wdLastTime = -1;
+let wdStallCount = 0;
+
+function startWatchdog(){
+  stopWatchdog();
+  wdLastTime = -1;
+  wdStallCount = 0;
+
+  watchdogId = setInterval(()=>{
+    if(!cur || !cur.y || !ytOk || !yt) return;
+    if(userPaused) return; // user paused on purpose, leave it
+
+    const st = yt.getPlayerState?.();
+    const ct = yt.getCurrentTime?.() || 0;
+    const dur = yt.getDuration?.() || 0;
+
+    // Case 1: player is PAUSED or UNSTARTED and we expect to be playing → resume
+    if(st === YT.PlayerState.PAUSED || st === -1){
+      try{ yt.playVideo(); }catch(e){}
+      return;
     }
-    lastTime=ct;
-  },1000);
+
+    // Case 2: player is PLAYING but time is frozen (stall / buffering stuck)
+    if(st === YT.PlayerState.PLAYING){
+      if(ct === wdLastTime && ct > 0){
+        wdStallCount++;
+        if(wdStallCount >= 5){ // 5s frozen → force seek +0.5s to unblock
+          wdStallCount = 0;
+          try{
+            yt.seekTo(ct + 0.5, true);
+            yt.playVideo();
+          }catch(e){}
+        }
+      } else {
+        wdStallCount = 0;
+      }
+      wdLastTime = ct;
+    }
+
+    // Case 3: ad detected (very short duration while we expect a real song)
+    if(st === YT.PlayerState.PLAYING && dur > 0 && dur < 35){
+      showAdOverlay();
+    }
+
+  }, 1000);
 }
-function stopStallCheck(){ clearInterval(stallCheckId); stallCount=0; lastTime=-1; }
+
+function stopWatchdog(){ clearInterval(watchdogId); wdLastTime = -1; wdStallCount = 0; }
+
+// Keep legacy stall names so nothing else breaks
+function startStallCheck(){ /* handled by watchdog */ }
+function stopStallCheck(){ /* handled by watchdog */ }
 
 /* ── AD DETECTION & AUTO-SKIP ── */
 let adWatchdog=null;
@@ -864,10 +897,20 @@ function updateMediaSession(){
     album:cur.g,
     artwork:cur.y?[{src:thumb,sizes:'320x180',type:'image/jpeg'}]:[],
   });
-  navigator.mediaSession.setActionHandler('play',()=>{ if(yt)yt.playVideo(); });
-  navigator.mediaSession.setActionHandler('pause',()=>{ if(yt)yt.pauseVideo(); });
-  navigator.mediaSession.setActionHandler('previoustrack',()=>prevS());
-  navigator.mediaSession.setActionHandler('nexttrack',()=>nextS());
+  navigator.mediaSession.setActionHandler('play',()=>{
+    userPaused=false;
+    if(yt) yt.playVideo();
+    playing=true; updIcon();
+    navigator.mediaSession.playbackState='playing';
+  });
+  navigator.mediaSession.setActionHandler('pause',()=>{
+    userPaused=true;
+    if(yt) yt.pauseVideo();
+    playing=false; updIcon(); stopTick();
+    navigator.mediaSession.playbackState='paused';
+  });
+  navigator.mediaSession.setActionHandler('previoustrack',()=>{ userPaused=false; prevS(); });
+  navigator.mediaSession.setActionHandler('nexttrack',()=>{ userPaused=false; nextS(); });
   navigator.mediaSession.setActionHandler('seekto',(d)=>{
     if(yt&&d.seekTime!==undefined) yt.seekTo(d.seekTime,true);
   });
@@ -972,10 +1015,12 @@ function playSong(idOrSong){
   hideAdOverlay();
 
   if(song.y && ytOk && yt){
-    clearInterval(fakeId); stopTick(); stopStallCheck();
+    clearInterval(fakeId); stopTick(); stopWatchdog();
     yt.loadVideoById(song.y);
     yt.setVolume(+document.getElementById('vsl').value);
     playing=true;
+    userPaused=false;
+    startWatchdog();
     startAdCheck();
   } else if(song.y && !ytOk){
     // YT not ready yet, wait
@@ -1011,8 +1056,16 @@ function togglePlay(){
   if(!cur) return;
   if(cur.y&&ytOk&&yt){
     const st=yt.getPlayerState?.();
-    if(st===YT.PlayerState.PLAYING){ yt.pauseVideo(); playing=false; }
-    else { yt.playVideo(); playing=true; }
+    if(st===YT.PlayerState.PLAYING){
+      userPaused=true;
+      yt.pauseVideo();
+      playing=false;
+      stopTick();
+    } else {
+      userPaused=false;
+      yt.playVideo();
+      playing=true;
+    }
     updIcon();
     navigator.mediaSession&&(navigator.mediaSession.playbackState=playing?'playing':'paused');
   } else {
@@ -1045,7 +1098,7 @@ function prevS(){
 }
 function closeP(){
   if(ytOk&&yt?.stopVideo) yt.stopVideo();
-  stopTick(); stopStallCheck(); clearInterval(fakeId);
+  stopTick(); stopWatchdog(); clearInterval(fakeId);
   playing=false; cur=null;
   document.getElementById('pbar').classList.add('idle');
   document.getElementById('ptl').textContent='—';
@@ -1173,14 +1226,16 @@ function closeSb(){
 
 /* ── Visibility change: resume if page hidden then visible ── */
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible' && playing && cur?.y && ytOk && yt){
+  if(document.visibilityState==='visible' && cur?.y && ytOk && yt && !userPaused){
     const st=yt.getPlayerState?.();
     if(st!==YT.PlayerState.PLAYING){
       setTimeout(()=>{
-        try{ yt.playVideo(); }catch(e){}
-      },300);
+        if(!userPaused) try{ yt.playVideo(); }catch(e){}
+      },400);
     }
   }
+  // Update media session position when coming back
+  if(document.visibilityState==='visible') updateMediaPosition();
 });
 
 /* ── Prevent screen sleep on mobile while playing ── */
